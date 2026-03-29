@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var noteWindows: [UUID: NoteWindowController] = [:]
     private var notesVisible = true
     private var hotkeySettingsController: HotkeySettingsWindowController?
+    private var fontSettingsController: FontSettingsWindowController?
 
     static func main() {
         let app = NSApplication.shared
@@ -55,13 +56,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            showAllNotes()
-            if noteWindows.isEmpty {
-                createNewNote()
-            }
+        toggleNotesVisibility()
+        if noteWindows.isEmpty {
+            createNewNote()
         }
-        return true
+        return false
     }
 
     // MARK: - Main Menu
@@ -72,6 +71,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // App menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "About PostItNotes", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(NSMenuItem(title: "Quit PostItNotes", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
@@ -88,6 +89,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
+
+        // Settings menu
+        let settingsMenuItem = NSMenuItem()
+        let settingsMenu = NSMenu(title: "Settings")
+
+        let hotkeyItem = NSMenuItem(title: "Set Hotkey...", action: #selector(openHotkeySettings), keyEquivalent: "")
+        hotkeyItem.target = self
+        settingsMenu.addItem(hotkeyItem)
+
+        let fontItem = NSMenuItem(title: "Set Default Font...", action: #selector(openFontSettings), keyEquivalent: "")
+        fontItem.target = self
+        settingsMenu.addItem(fontItem)
+
+        settingsMenu.addItem(NSMenuItem.separator())
+
+        let dataFolderItem = NSMenuItem(title: "Data Folder...", action: #selector(changeDataFolder), keyEquivalent: "")
+        dataFolderItem.target = self
+        settingsMenu.addItem(dataFolderItem)
+
+        settingsMenuItem.submenu = settingsMenu
+        mainMenu.addItem(settingsMenuItem)
 
         NSApp.mainMenu = mainMenu
     }
@@ -192,6 +214,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hotkeyItem = NSMenuItem(title: "Hotkey Settings...", action: #selector(openHotkeySettings), keyEquivalent: "")
         hotkeyItem.target = self
         menu.addItem(hotkeyItem)
+
 
         menu.addItem(NSMenuItem.separator())
 
@@ -323,6 +346,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeySettingsController = controller
     }
 
+    @objc func openFontSettings() {
+        let fontConfig = configService.getDefaultFont()
+        let controller = FontSettingsWindowController(currentFont: fontConfig)
+        controller.fontSettingsDelegate = self
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        fontSettingsController = controller
+    }
+
     @objc func quitApp() {
         NSApp.terminate(nil)
     }
@@ -352,5 +385,12 @@ extension AppDelegate: HotkeySettingsDelegate {
             }
             hotkeyService.register(modifiers: modifiers, keyCode: keyCode)
         }
+    }
+}
+
+// MARK: - FontSettingsDelegate
+extension AppDelegate: FontSettingsDelegate {
+    func fontSettingsDidSave(fontConfig: FontConfig) {
+        configService.setDefaultFont(fontConfig)
     }
 }

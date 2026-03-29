@@ -15,6 +15,8 @@
 		A10006 /* NoteWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006; };
 		A10007 /* HotkeySettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007; };
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008; };
+		A10009 /* ClaudeAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011; };
+		A10010 /* FontSettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +30,8 @@
 		B10008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10010 /* PostItNotes.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PostItNotes.entitlements; sourceTree = "<group>"; };
+		B10011 /* ClaudeAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAPIService.swift; sourceTree = "<group>"; };
+		B10012 /* FontSettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FontSettingsWindowController.swift; sourceTree = "<group>"; };
 		B10020 /* PostItNotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PostItNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -78,6 +82,7 @@
 				B10003 /* NoteService.swift */,
 				B10004 /* ConfigService.swift */,
 				B10005 /* HotkeyService.swift */,
+				B10011 /* ClaudeAPIService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -87,6 +92,7 @@
 			children = (
 				B10006 /* NoteWindowController.swift */,
 				B10007 /* HotkeySettingsWindowController.swift */,
+				B10012 /* FontSettingsWindowController.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -175,6 +181,8 @@
 				A10005 /* HotkeyService.swift in Sources */,
 				A10006 /* NoteWindowController.swift in Sources */,
 				A10007 /* HotkeySettingsWindowController.swift in Sources */,
+				A10009 /* ClaudeAPIService.swift in Sources */,
+				A10010 /* FontSettingsWindowController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

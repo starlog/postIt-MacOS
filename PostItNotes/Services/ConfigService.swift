@@ -14,13 +14,25 @@ struct HotkeyConfig: Codable {
     }
 }
 
+struct FontConfig: Codable {
+    var fontName: String
+    var fontSize: Double
+
+    init(fontName: String = "System", fontSize: Double = 13) {
+        self.fontName = fontName
+        self.fontSize = fontSize
+    }
+}
+
 struct AppConfig: Codable {
     var dataDirectory: String?
     var toggleHotkey: HotkeyConfig
+    var defaultFont: FontConfig
 
-    init(dataDirectory: String? = nil, toggleHotkey: HotkeyConfig = HotkeyConfig()) {
+    init(dataDirectory: String? = nil, toggleHotkey: HotkeyConfig = HotkeyConfig(), defaultFont: FontConfig = FontConfig()) {
         self.dataDirectory = dataDirectory
         self.toggleHotkey = toggleHotkey
+        self.defaultFont = defaultFont
     }
 }
 
@@ -71,6 +83,15 @@ class ConfigService {
 
     func setHotkeyConfig(_ hotkey: HotkeyConfig) {
         config.toggleHotkey = hotkey
+        save()
+    }
+
+    func getDefaultFont() -> FontConfig {
+        return config.defaultFont
+    }
+
+    func setDefaultFont(_ font: FontConfig) {
+        config.defaultFont = font
         save()
     }
 

@@ -1,4 +1,5 @@
 import Cocoa
+import WebKit
 
 protocol NoteWindowControllerDelegate: AnyObject {
     func noteWindowDidClose(_ controller: NoteWindowController)
@@ -8,12 +9,21 @@ protocol NoteWindowControllerDelegate: AnyObject {
 class NoteWindowController: NSWindowController {
     private var note: PostItNote
     private let noteService: NoteService
+    private let claudeService = ClaudeAPIService()
     weak var delegate: NoteWindowControllerDelegate?
 
     private var titleField: NSTextField!
     private var contentView: NSTextView!
     private var scrollView: NSScrollView!
     private var titleBarView: NSView!
+    private var markdownWebView: WKWebView!
+    private var markdownToggleBtn: NSButton!
+    private var isMarkdownRendered = false
+    private var separator: NSBox!
+    private var markdownFontName = "System"
+    private var markdownFontSize: CGFloat = 13
+    private var imageDeleteButton: NSButton?
+    private var imageDeleteCharIndex: Int?
 
     private let colorOptions: [(name: String, hex: String)] = [
         ("Yellow", "#FFFF88"),
@@ -67,7 +77,7 @@ class NoteWindowController: NSWindowController {
         window.contentView = container
 
         // Title bar area
-        titleBarView = NSView()
+        titleBarView = DraggableTitleBarView()
         titleBarView.translatesAutoresizingMaskIntoConstraints = false
         titleBarView.wantsLayer = true
         container.addSubview(titleBarView)
@@ -106,6 +116,61 @@ class NoteWindowController: NSWindowController {
             lastButton = btn
         }
 
+        // Font size decrease button
+        let fontMinusBtn = NSButton(frame: .zero)
+        fontMinusBtn.translatesAutoresizingMaskIntoConstraints = false
+        fontMinusBtn.isBordered = false
+        fontMinusBtn.title = "A-"
+        fontMinusBtn.font = NSFont.systemFont(ofSize: 9, weight: .medium)
+        fontMinusBtn.target = self
+        fontMinusBtn.action = #selector(fontSizeDecrease(_:))
+        fontMinusBtn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        titleBarView.addSubview(fontMinusBtn)
+
+        // Font size increase button
+        let fontPlusBtn = NSButton(frame: .zero)
+        fontPlusBtn.translatesAutoresizingMaskIntoConstraints = false
+        fontPlusBtn.isBordered = false
+        fontPlusBtn.title = "A+"
+        fontPlusBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        fontPlusBtn.target = self
+        fontPlusBtn.action = #selector(fontSizeIncrease(_:))
+        fontPlusBtn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        titleBarView.addSubview(fontPlusBtn)
+
+        // Font selection button
+        let fontBtn = NSButton(frame: .zero)
+        fontBtn.translatesAutoresizingMaskIntoConstraints = false
+        fontBtn.isBordered = false
+        fontBtn.title = "F"
+        fontBtn.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        fontBtn.target = self
+        fontBtn.action = #selector(fontSelectClicked(_:))
+        fontBtn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        titleBarView.addSubview(fontBtn)
+
+        // Markdown toggle button
+        markdownToggleBtn = NSButton(frame: .zero)
+        markdownToggleBtn.translatesAutoresizingMaskIntoConstraints = false
+        markdownToggleBtn.isBordered = false
+        markdownToggleBtn.title = "MD"
+        markdownToggleBtn.font = NSFont.systemFont(ofSize: 10, weight: .bold)
+        markdownToggleBtn.target = self
+        markdownToggleBtn.action = #selector(markdownToggleClicked(_:))
+        markdownToggleBtn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        titleBarView.addSubview(markdownToggleBtn)
+
+        // AI button
+        let aiBtn = NSButton(frame: .zero)
+        aiBtn.translatesAutoresizingMaskIntoConstraints = false
+        aiBtn.isBordered = false
+        aiBtn.title = "AI"
+        aiBtn.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        aiBtn.target = self
+        aiBtn.action = #selector(aiButtonClicked(_:))
+        aiBtn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        titleBarView.addSubview(aiBtn)
+
         // New note button (+)
         let newBtn = NSButton(frame: .zero)
         newBtn.translatesAutoresizingMaskIntoConstraints = false
@@ -134,7 +199,22 @@ class NoteWindowController: NSWindowController {
             closeBtn.widthAnchor.constraint(equalToConstant: 22),
             newBtn.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -2),
             newBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
-            newBtn.widthAnchor.constraint(equalToConstant: 22)
+            newBtn.widthAnchor.constraint(equalToConstant: 22),
+            aiBtn.trailingAnchor.constraint(equalTo: newBtn.leadingAnchor, constant: -2),
+            aiBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
+            aiBtn.widthAnchor.constraint(equalToConstant: 22),
+            markdownToggleBtn.trailingAnchor.constraint(equalTo: aiBtn.leadingAnchor, constant: -2),
+            markdownToggleBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
+            markdownToggleBtn.widthAnchor.constraint(equalToConstant: 26),
+            fontBtn.trailingAnchor.constraint(equalTo: markdownToggleBtn.leadingAnchor, constant: -2),
+            fontBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
+            fontBtn.widthAnchor.constraint(equalToConstant: 20),
+            fontPlusBtn.trailingAnchor.constraint(equalTo: fontBtn.leadingAnchor, constant: 0),
+            fontPlusBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
+            fontPlusBtn.widthAnchor.constraint(equalToConstant: 22),
+            fontMinusBtn.trailingAnchor.constraint(equalTo: fontPlusBtn.leadingAnchor, constant: 0),
+            fontMinusBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
+            fontMinusBtn.widthAnchor.constraint(equalToConstant: 22)
         ])
 
         // Title text field
@@ -149,7 +229,7 @@ class NoteWindowController: NSWindowController {
         container.addSubview(titleField)
 
         // Separator
-        let separator = NSBox()
+        separator = NSBox()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.boxType = .separator
         container.addSubview(separator)
@@ -181,6 +261,25 @@ class NoteWindowController: NSWindowController {
         scrollView.documentView = contentView
         container.addSubview(scrollView)
 
+        // Track mouse for image hover delete button
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        contentView.addTrackingArea(trackingArea)
+
+        // Markdown rendered view
+        let webConfig = WKWebViewConfiguration()
+        webConfig.userContentController.add(self, name: "deleteImage")
+        markdownWebView = WKWebView(frame: .zero, configuration: webConfig)
+        markdownWebView.translatesAutoresizingMaskIntoConstraints = false
+        markdownWebView.isHidden = true
+        markdownWebView.setValue(false, forKey: "drawsBackground")
+        container.addSubview(markdownWebView)
+
+
         // Layout
         NSLayoutConstraint.activate([
             titleBarView.topAnchor.constraint(equalTo: container.topAnchor),
@@ -200,7 +299,26 @@ class NoteWindowController: NSWindowController {
             scrollView.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 2),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            markdownWebView.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 2),
+            markdownWebView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            markdownWebView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            markdownWebView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+
+        // Image drag overlay - sits on top of everything, transparent to mouse events
+        let dragOverlay = ImageDragOverlayView()
+        dragOverlay.translatesAutoresizingMaskIntoConstraints = false
+        dragOverlay.onImageDrop = { [weak self] urls in
+            self?.handleImageDrop(urls: urls)
+        }
+        container.addSubview(dragOverlay)
+        NSLayoutConstraint.activate([
+            dragOverlay.topAnchor.constraint(equalTo: container.topAnchor),
+            dragOverlay.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            dragOverlay.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            dragOverlay.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
     }
 
@@ -213,6 +331,7 @@ class NoteWindowController: NSWindowController {
         } else {
             contentView.string = note.content
         }
+
     }
 
     private func saveContent() {
@@ -304,10 +423,287 @@ class NoteWindowController: NSWindowController {
         saveContent()
     }
 
+    // MARK: - Font
+
+    @objc private func fontSizeIncrease(_ sender: NSButton) {
+        changeFontSize(delta: 1)
+    }
+
+    @objc private func fontSizeDecrease(_ sender: NSButton) {
+        changeFontSize(delta: -1)
+    }
+
+    private func changeFontSize(delta: CGFloat) {
+        markdownFontSize = max(8, markdownFontSize + delta)
+        if isMarkdownRendered {
+            renderMarkdown()
+        } else {
+            guard let textStorage = contentView.textStorage else { return }
+            let range = NSRange(location: 0, length: textStorage.length)
+            guard range.length > 0 else { return }
+            textStorage.beginEditing()
+            textStorage.enumerateAttribute(.font, in: range) { value, attrRange, _ in
+                if let font = value as? NSFont {
+                    let newSize = max(8, font.pointSize + delta)
+                    let newFont = NSFontManager.shared.convert(font, toSize: newSize)
+                    textStorage.addAttribute(.font, value: newFont, range: attrRange)
+                }
+            }
+            textStorage.endEditing()
+            saveContent()
+        }
+    }
+
+    @objc private func fontSelectClicked(_ sender: NSButton) {
+        let fonts: [(display: String, name: String)] = [
+            ("시스템 기본", "System"),
+            ("Apple SD 고딕 Neo", "AppleSDGothicNeo-Regular"),
+            ("나눔고딕", "NanumGothic"),
+            ("나눔명조", "NanumMyeongjo"),
+            ("나눔바른고딕", "NanumBarunGothic"),
+            ("D2 코딩", "D2Coding"),
+            ("Apple 명조", "AppleMyungjo"),
+            ("나눔손글씨 펜", "NanumPen")
+        ]
+        let menu = NSMenu()
+        for font in fonts {
+            let item = NSMenuItem(title: font.display, action: #selector(fontSelected(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = font.name
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: sender.bounds.minX, y: sender.bounds.minY), in: sender)
+    }
+
+    @objc private func fontSelected(_ sender: NSMenuItem) {
+        guard let fontName = sender.representedObject as? String else { return }
+        markdownFontName = fontName
+        if isMarkdownRendered {
+            renderMarkdown()
+        } else {
+            guard let textStorage = contentView.textStorage else { return }
+            let range = NSRange(location: 0, length: textStorage.length)
+            guard range.length > 0 else { return }
+            textStorage.beginEditing()
+            textStorage.enumerateAttribute(.font, in: range) { value, attrRange, _ in
+                let currentFont = (value as? NSFont) ?? NSFont.systemFont(ofSize: 13)
+                let size = currentFont.pointSize
+                let newFont: NSFont
+                if fontName == "System" {
+                    newFont = NSFont.systemFont(ofSize: size)
+                } else {
+                    newFont = NSFont(name: fontName, size: size) ?? NSFont.systemFont(ofSize: size)
+                }
+                textStorage.addAttribute(.font, value: newFont, range: attrRange)
+            }
+            textStorage.endEditing()
+            saveContent()
+        }
+    }
+
+    // MARK: - Markdown
+
+    @objc private func markdownToggleClicked(_ sender: NSButton) {
+        if isMarkdownRendered {
+            switchToEditMode()
+        } else {
+            switchToMarkdownView()
+        }
+    }
+
+    private func switchToMarkdownView() {
+        isMarkdownRendered = true
+        markdownToggleBtn.title = "Edit"
+        scrollView.isHidden = true
+        markdownWebView.isHidden = false
+        renderMarkdown()
+    }
+
+    private func switchToEditMode() {
+        isMarkdownRendered = false
+        markdownToggleBtn.title = "MD"
+        markdownWebView.isHidden = true
+        scrollView.isHidden = false
+    }
+
+    private func renderMarkdown() {
+        let markdown = contentView.string
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "$", with: "\\$")
+        let bgColor = note.color
+        let cssFontFamily: String
+        if markdownFontName == "System" {
+            cssFontFamily = "-apple-system, BlinkMacSystemFont, sans-serif"
+        } else {
+            cssFontFamily = "'\(markdownFontName)', -apple-system, sans-serif"
+        }
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+            body {
+                font-family: \(cssFontFamily);
+                font-size: \(Int(markdownFontSize))px;
+                padding: 8px;
+                margin: 0;
+                background-color: \(bgColor);
+                color: #333;
+                word-wrap: break-word;
+            }
+            h1 { font-size: 1.4em; margin: 0.4em 0; }
+            h2 { font-size: 1.2em; margin: 0.4em 0; }
+            h3 { font-size: 1.1em; margin: 0.3em 0; }
+            h4, h5, h6 { font-size: 1em; margin: 0.3em 0; }
+            code {
+                background: rgba(0,0,0,0.08);
+                padding: 1px 4px;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+            pre {
+                background: rgba(0,0,0,0.08);
+                padding: 8px;
+                border-radius: 4px;
+                overflow-x: auto;
+            }
+            pre code { background: none; padding: 0; }
+            blockquote {
+                border-left: 3px solid rgba(0,0,0,0.3);
+                margin: 0.4em 0;
+                padding: 2px 8px;
+                color: #555;
+            }
+            ul, ol { padding-left: 20px; margin: 0.3em 0; }
+            hr { border: none; border-top: 1px solid rgba(0,0,0,0.2); margin: 0.5em 0; }
+            a { color: #0366d6; }
+            table { border-collapse: collapse; margin: 0.4em 0; }
+            th, td { border: 1px solid rgba(0,0,0,0.2); padding: 4px 8px; }
+            th { background: rgba(0,0,0,0.05); }
+            img { max-width: 100%; }
+            .img-wrapper {
+                position: relative;
+                display: inline-block;
+            }
+            .img-wrapper .delete-btn {
+                display: none;
+                position: absolute;
+                top: 4px;
+                left: 4px;
+                width: 22px;
+                height: 22px;
+                border-radius: 50%;
+                background: rgba(220, 50, 50, 0.85);
+                color: white;
+                border: none;
+                font-size: 14px;
+                line-height: 20px;
+                text-align: center;
+                cursor: pointer;
+                padding: 0;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            }
+            .img-wrapper:hover .delete-btn {
+                display: block;
+            }
+        </style>
+        </head>
+        <body>
+        <div id="content"></div>
+        <script>
+        function renderMarkdown(md) {
+            // Code blocks
+            md = md.replace(/```(\\w*)\\n([\\s\\S]*?)```/g, '<pre><code>$2</code></pre>');
+            // Headings
+            md = md.replace(/^######\\s+(.*)$/gm, '<h6>$1</h6>');
+            md = md.replace(/^#####\\s+(.*)$/gm, '<h5>$1</h5>');
+            md = md.replace(/^####\\s+(.*)$/gm, '<h4>$1</h4>');
+            md = md.replace(/^###\\s+(.*)$/gm, '<h3>$1</h3>');
+            md = md.replace(/^##\\s+(.*)$/gm, '<h2>$1</h2>');
+            md = md.replace(/^#\\s+(.*)$/gm, '<h1>$1</h1>');
+            // Horizontal rule
+            md = md.replace(/^---+\\s*$/gm, '<hr>');
+            // Bold & italic
+            md = md.replace(/\\*\\*\\*([^*]+)\\*\\*\\*/g, '<strong><em>$1</em></strong>');
+            md = md.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+            md = md.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+            // Inline code
+            md = md.replace(/`([^`]+)`/g, '<code>$1</code>');
+            // Images - convert absolute paths to file:// URLs, wrap with delete button
+            md = md.replace(/!\\[([^\\]]*)\\]\\(([^)]+)\\)/g, function(m, alt, src) {
+                var origSrc = src;
+                if (src.startsWith('/')) { src = 'file://' + src; }
+                return '<span class="img-wrapper"><button class="delete-btn" onclick="deleteImage(\\'' + origSrc.replace(/'/g, "\\\\'") + '\\')">\\u2715</button><img src="' + src + '" alt="' + alt + '"></span>';
+            });
+            // Links
+            md = md.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2">$1</a>');
+            // Blockquotes
+            md = md.replace(/^>\\s+(.*)$/gm, '<blockquote>$1</blockquote>');
+            // Unordered lists
+            md = md.replace(/^\\s*[-*+]\\s+(.*)$/gm, '<li>$1</li>');
+            md = md.replace(/(<li>.*<\\/li>\\n?)+/g, function(m) { return '<ul>' + m + '</ul>'; });
+            // Ordered lists
+            md = md.replace(/^\\s*\\d+\\.\\s+(.*)$/gm, '<li>$1</li>');
+            // Tables
+            md = md.replace(/^(\\|.+\\|\\n)+/gm, function(tableBlock) {
+                var rows = tableBlock.trim().split('\\n');
+                if (rows.length < 2) return tableBlock;
+                var html = '<table>';
+                // Header row
+                var headerCells = rows[0].split('|').filter(function(c) { return c.trim() !== ''; });
+                html += '<thead><tr>';
+                headerCells.forEach(function(c) { html += '<th>' + c.trim() + '</th>'; });
+                html += '</tr></thead>';
+                // Find where separator row is (row with |---|---|)
+                var startIdx = 1;
+                if (rows.length > 1 && /^[\\s|:-]+$/.test(rows[1])) {
+                    startIdx = 2;
+                }
+                html += '<tbody>';
+                for (var i = startIdx; i < rows.length; i++) {
+                    var cells = rows[i].split('|').filter(function(c) { return c.trim() !== ''; });
+                    html += '<tr>';
+                    cells.forEach(function(c) { html += '<td>' + c.trim() + '</td>'; });
+                    html += '</tr>';
+                }
+                html += '</tbody></table>';
+                return html;
+            });
+            // Paragraphs
+            md = md.replace(/\\n\\n+/g, '</p><p>');
+            md = md.replace(/\\n/g, '<br>');
+            md = '<p>' + md + '</p>';
+            // Clean up
+            md = md.replace(/<p><(h[1-6]|ul|ol|pre|blockquote|hr|table)/g, '<$1');
+            md = md.replace(/<\\/(h[1-6]|ul|ol|pre|blockquote|table)><\\/p>/g, '</$1>');
+            md = md.replace(/<p><\\/p>/g, '');
+            md = md.replace(/<hr><\\/p>/g, '<hr>');
+            return md;
+        }
+        document.getElementById('content').innerHTML = renderMarkdown(`\(markdown)`);
+        function deleteImage(src) {
+            window.webkit.messageHandlers.deleteImage.postMessage(src);
+        }
+        </script>
+        </body>
+        </html>
+        """
+        // Write HTML to data directory, allow read access to / for images from any path
+        let dataDir = URL(fileURLWithPath: noteService.getDataDirectory())
+        let tmpFile = dataDir.appendingPathComponent("preview_\(note.id.uuidString).html")
+        try? html.write(to: tmpFile, atomically: true, encoding: .utf8)
+        markdownWebView.loadFileURL(tmpFile, allowingReadAccessTo: URL(fileURLWithPath: "/"))
+    }
+
     func applyColor(_ hex: String) {
         guard let color = NSColor(hex: hex) else { return }
         window?.contentView?.layer?.backgroundColor = color.cgColor
         titleBarView?.layer?.backgroundColor = color.blended(withFraction: 0.1, of: .black)?.cgColor
+        if isMarkdownRendered {
+            renderMarkdown()
+        }
     }
 
     func getNoteId() -> UUID {
@@ -350,6 +746,77 @@ class NoteWindowController: NSWindowController {
         delegate?.noteWindowDidClose(self)
     }
 
+    @objc private func aiButtonClicked(_ sender: NSButton) {
+        let alert = NSAlert()
+        alert.messageText = "AI Assistant"
+        alert.informativeText = "Enter your prompt:"
+        alert.addButton(withTitle: "Send")
+        alert.addButton(withTitle: "Cancel")
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 294, height: 100))
+        textView.isRichText = false
+        textView.font = NSFont.systemFont(ofSize: 13)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: 294, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+        alert.window.initialFirstResponder = textView
+
+        guard let window = self.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self = self, response == .alertFirstButtonReturn else { return }
+            let prompt = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !prompt.isEmpty else { return }
+            self.sendToAI(prompt: prompt)
+        }
+    }
+
+    private func sendToAI(prompt: String) {
+        let noteContent = contentView.string
+
+        // Show loading indicator
+        let originalTitle = titleField.stringValue
+        DispatchQueue.main.async {
+            self.titleField.stringValue = "⏳ AI processing..."
+            self.titleField.isEditable = false
+        }
+
+        claudeService.sendMessage(prompt: prompt, noteContent: noteContent) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.titleField.stringValue = originalTitle
+                self.titleField.isEditable = true
+
+                switch result {
+                case .success(let response):
+                    let sep = "\n\n--- AI Response ---\n"
+                    let currentText = self.contentView.string
+                    self.contentView.string = currentText + sep + response
+                    self.saveContent()
+                    if self.isMarkdownRendered {
+                        self.renderMarkdown()
+                    }
+                case .failure(let error):
+                    let errorAlert = NSAlert()
+                    errorAlert.messageText = "AI Error"
+                    errorAlert.informativeText = error.localizedDescription
+                    errorAlert.alertStyle = .warning
+                    if let window = self.window {
+                        errorAlert.beginSheetModal(for: window, completionHandler: nil)
+                    }
+                }
+            }
+        }
+    }
+
     @objc private func windowDidMove(_ notification: Notification) {
         guard let frame = window?.frame else { return }
         note.x = Double(frame.origin.x)
@@ -362,6 +829,125 @@ class NoteWindowController: NSWindowController {
         note.width = Double(frame.size.width)
         note.height = Double(frame.size.height)
         noteService.updateNote(note)
+    }
+
+    // MARK: - Image Drop
+
+    func handleImageDrop(urls: [URL]) {
+        for url in urls {
+            let path = url.path
+            if isMarkdownRendered {
+                let markdownImage = "\n![image](\(path))\n"
+                contentView.string += markdownImage
+                saveContent()
+                renderMarkdown()
+            } else {
+                insertImageAttachment(path: path)
+            }
+        }
+    }
+
+    // MARK: - Image hover delete (edit mode)
+
+    override func mouseMoved(with event: NSEvent) {
+        guard !isMarkdownRendered else { return }
+        let pointInWindow = event.locationInWindow
+        let pointInTextView = contentView.convert(pointInWindow, from: nil)
+
+        guard contentView.bounds.contains(pointInTextView) else {
+            hideImageDeleteButton()
+            return
+        }
+
+        let pointInContainer = NSPoint(
+            x: pointInTextView.x - contentView.textContainerInset.width,
+            y: pointInTextView.y - contentView.textContainerInset.height
+        )
+
+        let charIndex = contentView.layoutManager?.characterIndex(
+            for: pointInContainer,
+            in: contentView.textContainer!,
+            fractionOfDistanceBetweenInsertionPoints: nil
+        ) ?? NSNotFound
+
+        guard charIndex != NSNotFound,
+              charIndex < (contentView.textStorage?.length ?? 0) else {
+            hideImageDeleteButton()
+            return
+        }
+
+        let attrs = contentView.textStorage?.attributes(at: charIndex, effectiveRange: nil)
+        if let _ = attrs?[.attachment] as? NSTextAttachment {
+            showImageDeleteButton(at: charIndex)
+        } else {
+            hideImageDeleteButton()
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hideImageDeleteButton()
+    }
+
+    private func showImageDeleteButton(at charIndex: Int) {
+        if imageDeleteCharIndex == charIndex, imageDeleteButton != nil { return }
+
+        hideImageDeleteButton()
+        imageDeleteCharIndex = charIndex
+
+        guard let layoutManager = contentView.layoutManager,
+              let textContainer = contentView.textContainer else { return }
+
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
+        var lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        lineRect.origin.x += contentView.textContainerInset.width
+        lineRect.origin.y += contentView.textContainerInset.height
+
+        let btn = NSButton(frame: NSRect(x: lineRect.origin.x + 4, y: lineRect.origin.y + 4, width: 22, height: 22))
+        btn.bezelStyle = .circular
+        btn.title = "\u{2715}"
+        btn.font = NSFont.systemFont(ofSize: 12, weight: .bold)
+        btn.isBordered = false
+        btn.wantsLayer = true
+        btn.layer?.backgroundColor = NSColor(red: 0.86, green: 0.2, blue: 0.2, alpha: 0.85).cgColor
+        btn.layer?.cornerRadius = 11
+        btn.contentTintColor = .white
+        btn.target = self
+        btn.action = #selector(deleteImageAttachment(_:))
+        contentView.addSubview(btn)
+        imageDeleteButton = btn
+    }
+
+    private func hideImageDeleteButton() {
+        imageDeleteButton?.removeFromSuperview()
+        imageDeleteButton = nil
+        imageDeleteCharIndex = nil
+    }
+
+    @objc private func deleteImageAttachment(_ sender: NSButton) {
+        guard let charIndex = imageDeleteCharIndex,
+              let textStorage = contentView.textStorage,
+              charIndex < textStorage.length else { return }
+        hideImageDeleteButton()
+        textStorage.deleteCharacters(in: NSRange(location: charIndex, length: 1))
+        saveContent()
+    }
+
+    private func insertImageAttachment(path: String) {
+        guard let image = NSImage(contentsOfFile: path) else { return }
+        let attachment = NSTextAttachment()
+        let cell = NSTextAttachmentCell(imageCell: image)
+        let maxWidth = contentView.bounds.width - 20
+        if image.size.width > maxWidth {
+            let ratio = maxWidth / image.size.width
+            cell.image?.size = NSSize(width: maxWidth, height: image.size.height * ratio)
+        }
+        attachment.attachmentCell = cell
+        let attrStr = NSAttributedString(attachment: attachment)
+        let insertionPoint = contentView.selectedRange().location
+        contentView.textStorage?.insert(attrStr, at: insertionPoint)
+        let pathMarker = NSAttributedString(string: "\n")
+        contentView.textStorage?.insert(pathMarker, at: insertionPoint + 1)
+        saveContent()
     }
 
     deinit {
@@ -381,6 +967,38 @@ extension NoteWindowController: NSTextFieldDelegate {
 extension NoteWindowController: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         saveContent()
+
+    }
+}
+
+// MARK: - WKScriptMessageHandler
+extension NoteWindowController: WKScriptMessageHandler {
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "deleteImage", let src = message.body as? String {
+            deleteMarkdownImage(src: src)
+        }
+    }
+
+    private func deleteMarkdownImage(src: String) {
+        // Remove the markdown image line matching this src
+        let lines = contentView.string.components(separatedBy: "\n")
+        let filtered = lines.filter { line in
+            // Match ![...](<src>) or ![...](file://<src>)
+            if line.contains("![\(line)") { return true } // keep non-image lines
+            let pattern = "![" // quick check
+            guard line.contains(pattern) else { return true }
+            return !line.contains("(\(src))") && !line.contains("(file://\(src))")
+        }
+        contentView.string = filtered.joined(separator: "\n")
+        saveContent()
+        renderMarkdown()
+    }
+}
+
+// MARK: - Custom title bar view that accepts first mouse click
+class DraggableTitleBarView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true
     }
 }
 
@@ -388,6 +1006,10 @@ extension NoteWindowController: NSTextViewDelegate {
 class NoteWindow: NSWindow {
     override var canBecomeKey: Bool { return true }
     override var canBecomeMain: Bool { return true }
+
+    func setupImageDrop() {
+        contentView?.registerForDraggedTypes([.fileURL])
+    }
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -404,6 +1026,68 @@ class NoteWindow: NSWindow {
         super.keyDown(with: event)
     }
 }
+
+// MARK: - Transparent overlay that intercepts image file drags but passes all mouse events through
+class ImageDragOverlayView: NSView {
+    var onImageDrop: (([URL]) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    // hitTest returns nil so all mouse events (click, scroll, select) pass through to views below.
+    // Drag destination lookup uses frame containment, not hitTest, so drags still arrive here.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return nil
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if hasImageFiles(sender) { return .copy }
+        return []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if hasImageFiles(sender) { return .copy }
+        return []
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        return hasImageFiles(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = imageURLs(from: sender)
+        guard !urls.isEmpty else { return false }
+        onImageDrop?(urls)
+        return true
+    }
+
+    private func hasImageFiles(_ info: NSDraggingInfo) -> Bool {
+        return !imageURLs(from: info).isEmpty
+    }
+
+    private func imageURLs(from info: NSDraggingInfo) -> [URL] {
+        guard let items = info.draggingPasteboard.pasteboardItems else { return [] }
+        let imageExts = Set(["png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "heic"])
+        var urls: [URL] = []
+        for item in items {
+            if let urlString = item.string(forType: .fileURL),
+               let url = URL(string: urlString) {
+                let ext = url.pathExtension.lowercased()
+                if imageExts.contains(ext) {
+                    urls.append(url)
+                }
+            }
+        }
+        return urls
+    }
+}
+
 
 // MARK: - NSColor hex extension
 extension NSColor {

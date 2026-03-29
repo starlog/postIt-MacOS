@@ -39,6 +39,10 @@ class NoteService {
         save()
     }
 
+    func getDataDirectory() -> String {
+        return dataDirectory
+    }
+
     func changeDataDirectory(_ newPath: String) {
         dataDirectory = newPath
         load()

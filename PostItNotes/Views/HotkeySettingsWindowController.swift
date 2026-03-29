@@ -12,7 +12,6 @@ class HotkeySettingsWindowController: NSWindowController {
     private var hotkeyLabel: NSTextField!
     private var capturedModifiers: UInt32 = 0
     private var capturedKeyCode: UInt32 = 0
-    private var isCapturing = false
     private var hotkeyField: NSTextField!
 
     init(currentModifiers: UInt32, currentKeyCode: UInt32, currentEnabled: Bool) {
@@ -20,12 +19,12 @@ class HotkeySettingsWindowController: NSWindowController {
         self.capturedKeyCode = currentKeyCode
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 200),
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Hotkey Settings"
+        window.title = "Set Hotkey"
         window.center()
         window.isReleasedWhenClosed = false
 
@@ -70,6 +69,10 @@ class HotkeySettingsWindowController: NSWindowController {
         contentView.addSubview(instructions)
 
         // Buttons
+        let resetBtn = NSButton(title: "Reset to Default", target: self, action: #selector(resetClicked(_:)))
+        resetBtn.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(resetBtn)
+
         let saveBtn = NSButton(title: "Save", target: self, action: #selector(saveClicked(_:)))
         saveBtn.translatesAutoresizingMaskIntoConstraints = false
         saveBtn.keyEquivalent = "\r"
@@ -96,6 +99,9 @@ class HotkeySettingsWindowController: NSWindowController {
             instructions.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             instructions.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
 
+            resetBtn.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+            resetBtn.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+
             saveBtn.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
             saveBtn.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
             saveBtn.widthAnchor.constraint(equalToConstant: 80),
@@ -107,8 +113,8 @@ class HotkeySettingsWindowController: NSWindowController {
     }
 
     override func keyDown(with event: NSEvent) {
-        // Ignore modifier-only keys
         let modifierFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // Ignore modifier-only keys
         if event.keyCode == 55 || event.keyCode == 54 || event.keyCode == 56 ||
            event.keyCode == 60 || event.keyCode == 58 || event.keyCode == 61 ||
            event.keyCode == 59 || event.keyCode == 62 {
@@ -121,11 +127,18 @@ class HotkeySettingsWindowController: NSWindowController {
         if modifierFlags.contains(.option) { carbonMods |= UInt32(optionKey) }
         if modifierFlags.contains(.control) { carbonMods |= UInt32(controlKey) }
 
-        // Require at least one modifier
         guard carbonMods != 0 else { return }
 
         capturedModifiers = carbonMods
         capturedKeyCode = UInt32(event.keyCode)
+        hotkeyField.stringValue = HotkeyService.hotkeyDisplayString(modifiers: capturedModifiers, keyCode: capturedKeyCode)
+    }
+
+    @objc private func resetClicked(_ sender: NSButton) {
+        let defaults = HotkeyConfig()
+        capturedModifiers = defaults.modifiers
+        capturedKeyCode = defaults.keyCode
+        enabledCheckbox.state = .on
         hotkeyField.stringValue = HotkeyService.hotkeyDisplayString(modifiers: capturedModifiers, keyCode: capturedKeyCode)
     }
 
