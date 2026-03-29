@@ -24,6 +24,11 @@ class NoteWindowController: NSWindowController {
     private var markdownFontSize: CGFloat = 13
     private var imageDeleteButton: NSButton?
     private var imageDeleteCharIndex: Int?
+    private var imageResizeHandle: NSView?
+    private var isResizingImage = false
+    private var resizeStartPoint: NSPoint = .zero
+    private var resizeStartSize: NSSize = .zero
+    private var resizeImageCharIndex: Int?
 
     private let colorOptions: [(name: String, hex: String)] = [
         ("Yellow", "#FFFF88"),
@@ -324,23 +329,98 @@ class NoteWindowController: NSWindowController {
 
     private func loadNoteData() {
         titleField.stringValue = note.title
-        if let rtfString = note.rtfContent,
-           let rtfData = Data(base64Encoded: rtfString),
-           let attrString = NSAttributedString(rtf: rtfData, documentAttributes: nil) {
+        let content = note.content
+
+        if content.contains("{{IMG:") {
+            // Content has image markers - reconstruct with attachments
+            loadContentWithImages(content)
+        } else if let rtfString = note.rtfContent,
+                  let rtfData = Data(base64Encoded: rtfString),
+                  let attrString = NSAttributedString(rtf: rtfData, documentAttributes: nil) {
             contentView.textStorage?.setAttributedString(attrString)
         } else {
-            contentView.string = note.content
+            contentView.string = content
+        }
+    }
+
+    private func loadContentWithImages(_ content: String) {
+        let result = NSMutableAttributedString()
+        let defaultFont = contentView.font ?? NSFont.systemFont(ofSize: 13)
+        var remaining = content
+
+        while let markerStart = remaining.range(of: "{{IMG:") {
+            // Add text before marker
+            let textBefore = String(remaining[remaining.startIndex..<markerStart.lowerBound])
+            if !textBefore.isEmpty {
+                result.append(NSAttributedString(string: textBefore, attributes: [.font: defaultFont]))
+            }
+
+            // Find end of marker
+            let afterMarker = remaining[markerStart.upperBound...]
+            if let markerEnd = afterMarker.range(of: "}}") {
+                let markerContent = String(afterMarker[afterMarker.startIndex..<markerEnd.lowerBound])
+                // Parse path and optional size: "path:WxH" or just "path"
+                var path = markerContent
+                var savedSize: NSSize? = nil
+                if let lastColon = markerContent.range(of: ":", options: .backwards),
+                   markerContent[lastColon.upperBound...].contains("x") {
+                    path = String(markerContent[markerContent.startIndex..<lastColon.lowerBound])
+                    let sizeStr = String(markerContent[lastColon.upperBound...])
+                    let parts = sizeStr.split(separator: "x")
+                    if parts.count == 2, let w = Double(parts[0]), let h = Double(parts[1]) {
+                        savedSize = NSSize(width: w, height: h)
+                    }
+                }
+                if path != "unknown", let image = NSImage(contentsOfFile: path) {
+                    let displaySize = savedSize ?? initialImageSize(image)
+                    let attachment = NSTextAttachment()
+                    let cell = NSTextAttachmentCell(imageCell: image)
+                    cell.image?.size = displaySize
+                    attachment.attachmentCell = cell
+                    let imgAttr = NSMutableAttributedString(attachment: attachment)
+                    imgAttr.addAttribute(Self.imagePathKey, value: path, range: NSRange(location: 0, length: imgAttr.length))
+                    imgAttr.addAttribute(Self.imageSizeKey, value: NSValue(size: displaySize), range: NSRange(location: 0, length: imgAttr.length))
+                    result.append(imgAttr)
+                }
+                remaining = String(remaining[markerEnd.upperBound...])
+            } else {
+                break
+            }
         }
 
+        // Append remaining text
+        if !remaining.isEmpty {
+            result.append(NSAttributedString(string: remaining, attributes: [.font: defaultFont]))
+        }
+
+        contentView.textStorage?.setAttributedString(result)
     }
 
     private func saveContent() {
-        note.content = contentView.string
-        if let textStorage = contentView.textStorage {
-            let fullRange = NSRange(location: 0, length: textStorage.length)
-            if let rtfData = textStorage.rtf(from: fullRange, documentAttributes: [:]) {
-                note.rtfContent = rtfData.base64EncodedString()
+        // Build content with image path markers for persistence
+        guard let textStorage = contentView.textStorage else { return }
+        var plainContent = ""
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.enumerateAttributes(in: fullRange) { attrs, range, _ in
+            if let path = attrs[Self.imagePathKey] as? String {
+                if let sizeVal = attrs[Self.imageSizeKey] as? NSValue {
+                    let size = sizeVal.sizeValue
+                    plainContent += "{{IMG:\(path):\(Int(size.width))x\(Int(size.height))}}"
+                } else {
+                    plainContent += "{{IMG:\(path)}}"
+                }
+            } else if let _ = attrs[.attachment] as? NSTextAttachment {
+                // Attachment without path - skip
+                plainContent += "{{IMG:unknown}}"
+            } else {
+                plainContent += (textStorage.string as NSString).substring(with: range)
             }
+        }
+        note.content = plainContent
+
+        // Also save RTF for styled text (without images)
+        if let rtfData = textStorage.rtf(from: fullRange, documentAttributes: [:]) {
+            note.rtfContent = rtfData.base64EncodedString()
         }
         noteService.updateNote(note)
     }
@@ -779,8 +859,25 @@ class NoteWindowController: NSWindowController {
         }
     }
 
+    private func buildNoteContentForAI() -> String {
+        guard let textStorage = contentView.textStorage else { return contentView.string }
+        var result = ""
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.enumerateAttributes(in: fullRange) { attrs, range, _ in
+            if let path = attrs[Self.imagePathKey] as? String {
+                result += "[Image: \(path)]"
+            } else if let _ = attrs[.attachment] as? NSTextAttachment {
+                result += "[Image]"
+            } else {
+                let text = (textStorage.string as NSString).substring(with: range)
+                result += text
+            }
+        }
+        return result
+    }
+
     private func sendToAI(prompt: String) {
-        let noteContent = contentView.string
+        let noteContent = buildNoteContentForAI()
 
         // Show loading indicator
         let originalTitle = titleField.stringValue
@@ -879,13 +976,18 @@ class NoteWindowController: NSWindowController {
         let attrs = contentView.textStorage?.attributes(at: charIndex, effectiveRange: nil)
         if let _ = attrs?[.attachment] as? NSTextAttachment {
             showImageDeleteButton(at: charIndex)
+            showImageResizeHandle(at: charIndex)
         } else {
             hideImageDeleteButton()
+            hideImageResizeHandle()
         }
     }
 
     override func mouseExited(with event: NSEvent) {
-        hideImageDeleteButton()
+        if !isResizingImage {
+            hideImageDeleteButton()
+            hideImageResizeHandle()
+        }
     }
 
     private func showImageDeleteButton(at charIndex: Int) {
@@ -932,17 +1034,134 @@ class NoteWindowController: NSWindowController {
         saveContent()
     }
 
-    private func insertImageAttachment(path: String) {
+    private func showImageResizeHandle(at charIndex: Int) {
+        if resizeImageCharIndex == charIndex, imageResizeHandle != nil { return }
+
+        hideImageResizeHandle()
+        resizeImageCharIndex = charIndex
+
+        guard let layoutManager = contentView.layoutManager,
+              let textContainer = contentView.textContainer else { return }
+
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        rect.origin.x += contentView.textContainerInset.width
+        rect.origin.y += contentView.textContainerInset.height
+
+        let handleSize: CGFloat = 14
+        let handle = NSView(frame: NSRect(
+            x: rect.origin.x + rect.width - handleSize,
+            y: rect.origin.y + rect.height - handleSize,
+            width: handleSize,
+            height: handleSize
+        ))
+        handle.wantsLayer = true
+        handle.layer?.backgroundColor = NSColor.darkGray.withAlphaComponent(0.7).cgColor
+        handle.layer?.cornerRadius = 2
+
+        let panGesture = NSPanGestureRecognizer(target: self, action: #selector(handleImageResize(_:)))
+        handle.addGestureRecognizer(panGesture)
+
+        contentView.addSubview(handle)
+        imageResizeHandle = handle
+
+        NSCursor.resizeLeftRight.set()
+    }
+
+    private func hideImageResizeHandle() {
+        imageResizeHandle?.removeFromSuperview()
+        imageResizeHandle = nil
+        if !isResizingImage {
+            resizeImageCharIndex = nil
+        }
+    }
+
+    private var resizeImageOriginX: CGFloat = 0
+
+    @objc private func handleImageResize(_ gesture: NSPanGestureRecognizer) {
+        guard let charIndex = resizeImageCharIndex,
+              let textStorage = contentView.textStorage,
+              charIndex < textStorage.length,
+              let attachment = textStorage.attribute(.attachment, at: charIndex, effectiveRange: nil) as? NSTextAttachment,
+              let cell = attachment.attachmentCell as? NSTextAttachmentCell,
+              let image = cell.image else { return }
+
+        if gesture.state == .began {
+            isResizingImage = true
+            resizeStartSize = image.size
+            // Get image origin X
+            if let layoutManager = contentView.layoutManager,
+               let textContainer = contentView.textContainer {
+                let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
+                let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                resizeImageOriginX = rect.origin.x + contentView.textContainerInset.width
+            }
+        }
+
+        let currentPoint = gesture.location(in: contentView)
+        // Width = mouse X position - image left edge
+        let ratio = resizeStartSize.height / resizeStartSize.width
+        let newWidth = max(30, currentPoint.x - resizeImageOriginX)
+        let newHeight = newWidth * ratio
+        let newSize = NSSize(width: newWidth, height: newHeight)
+
+        cell.image?.size = newSize
+        textStorage.addAttribute(Self.imageSizeKey, value: NSValue(size: newSize), range: NSRange(location: charIndex, length: 1))
+
+        // Force layout update
+        contentView.needsDisplay = true
+        contentView.layoutManager?.invalidateLayout(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
+
+        // Update handle position
+        if let layoutManager = contentView.layoutManager,
+           let textContainer = contentView.textContainer {
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            rect.origin.x += contentView.textContainerInset.width
+            rect.origin.y += contentView.textContainerInset.height
+            let handleSize: CGFloat = 14
+            imageResizeHandle?.frame = NSRect(
+                x: rect.origin.x + rect.width - handleSize,
+                y: rect.origin.y + rect.height - handleSize,
+                width: handleSize,
+                height: handleSize
+            )
+            // Update delete button position too
+            imageDeleteButton?.frame.origin = NSPoint(x: rect.origin.x + 4, y: rect.origin.y + 4)
+        }
+
+        if gesture.state == .ended || gesture.state == .cancelled {
+            isResizingImage = false
+            saveContent()
+        }
+    }
+
+    private static let imagePathKey = NSAttributedString.Key("imageFilePath")
+
+    private static let imageSizeKey = NSAttributedString.Key("imageSize")
+
+    private func initialImageSize(_ image: NSImage) -> NSSize {
+        let maxInitialWidth: CGFloat = 300
+        var width = image.size.width
+        var height = image.size.height
+        if width > maxInitialWidth {
+            let ratio = maxInitialWidth / width
+            width = maxInitialWidth
+            height *= ratio
+        }
+        return NSSize(width: width, height: height)
+    }
+
+    private func insertImageAttachment(path: String, size: NSSize? = nil) {
         guard let image = NSImage(contentsOfFile: path) else { return }
+        let displaySize = size ?? initialImageSize(image)
         let attachment = NSTextAttachment()
         let cell = NSTextAttachmentCell(imageCell: image)
-        let maxWidth = contentView.bounds.width - 20
-        if image.size.width > maxWidth {
-            let ratio = maxWidth / image.size.width
-            cell.image?.size = NSSize(width: maxWidth, height: image.size.height * ratio)
-        }
+        cell.image?.size = displaySize
         attachment.attachmentCell = cell
-        let attrStr = NSAttributedString(attachment: attachment)
+        let attrStr = NSMutableAttributedString(attachment: attachment)
+        attrStr.addAttribute(Self.imagePathKey, value: path, range: NSRange(location: 0, length: attrStr.length))
+        attrStr.addAttribute(Self.imageSizeKey, value: NSValue(size: displaySize), range: NSRange(location: 0, length: attrStr.length))
         let insertionPoint = contentView.selectedRange().location
         contentView.textStorage?.insert(attrStr, at: insertionPoint)
         let pathMarker = NSAttributedString(string: "\n")
