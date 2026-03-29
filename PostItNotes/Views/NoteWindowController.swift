@@ -400,9 +400,11 @@ class NoteWindowController: NSWindowController {
         // Build content with image path markers for persistence
         guard let textStorage = contentView.textStorage else { return }
         var plainContent = ""
+        var hasImages = false
         let fullRange = NSRange(location: 0, length: textStorage.length)
         textStorage.enumerateAttributes(in: fullRange) { attrs, range, _ in
             if let path = attrs[Self.imagePathKey] as? String {
+                hasImages = true
                 if let sizeVal = attrs[Self.imageSizeKey] as? NSValue {
                     let size = sizeVal.sizeValue
                     plainContent += "{{IMG:\(path):\(Int(size.width))x\(Int(size.height))}}"
@@ -410,16 +412,17 @@ class NoteWindowController: NSWindowController {
                     plainContent += "{{IMG:\(path)}}"
                 }
             } else if let _ = attrs[.attachment] as? NSTextAttachment {
-                // Attachment without path - skip
-                plainContent += "{{IMG:unknown}}"
+                // Attachment without path - skip entirely
             } else {
                 plainContent += (textStorage.string as NSString).substring(with: range)
             }
         }
         note.content = plainContent
 
-        // Also save RTF for styled text (without images)
-        if let rtfData = textStorage.rtf(from: fullRange, documentAttributes: [:]) {
+        // Only save RTF when no images (images are saved as markers in content)
+        if hasImages {
+            note.rtfContent = nil
+        } else if let rtfData = textStorage.rtf(from: fullRange, documentAttributes: [:]) {
             note.rtfContent = rtfData.base64EncodedString()
         }
         noteService.updateNote(note)
