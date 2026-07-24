@@ -24,15 +24,57 @@ struct FontConfig: Codable {
     }
 }
 
+enum ViewMode: String, Codable {
+    case windows
+    case tabs
+}
+
+struct WindowFrame: Codable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+}
+
 struct AppConfig: Codable {
     var dataDirectory: String?
     var toggleHotkey: HotkeyConfig
     var defaultFont: FontConfig
+    var viewMode: ViewMode?
+    var tabWindow: WindowFrame?
 
-    init(dataDirectory: String? = nil, toggleHotkey: HotkeyConfig = HotkeyConfig(), defaultFont: FontConfig = FontConfig()) {
+    init(
+        dataDirectory: String? = nil,
+        toggleHotkey: HotkeyConfig = HotkeyConfig(),
+        defaultFont: FontConfig = FontConfig(),
+        viewMode: ViewMode? = nil,
+        tabWindow: WindowFrame? = nil
+    ) {
         self.dataDirectory = dataDirectory
         self.toggleHotkey = toggleHotkey
         self.defaultFont = defaultFont
+        self.viewMode = viewMode
+        self.tabWindow = tabWindow
+    }
+
+    // Decode every key leniently: a config written by an older (or newer) build
+    // must never fail to load, otherwise settings like dataDirectory would be
+    // silently reset and the user's notes would look like they vanished.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dataDirectory = (try? container.decodeIfPresent(String.self, forKey: .dataDirectory)) ?? nil
+        if let hotkey = try? container.decodeIfPresent(HotkeyConfig.self, forKey: .toggleHotkey) {
+            toggleHotkey = hotkey
+        } else {
+            toggleHotkey = HotkeyConfig()
+        }
+        if let font = try? container.decodeIfPresent(FontConfig.self, forKey: .defaultFont) {
+            defaultFont = font
+        } else {
+            defaultFont = FontConfig()
+        }
+        viewMode = (try? container.decodeIfPresent(ViewMode.self, forKey: .viewMode)) ?? nil
+        tabWindow = (try? container.decodeIfPresent(WindowFrame.self, forKey: .tabWindow)) ?? nil
     }
 }
 
@@ -92,6 +134,24 @@ class ConfigService {
 
     func setDefaultFont(_ font: FontConfig) {
         config.defaultFont = font
+        save()
+    }
+
+    func getViewMode() -> ViewMode {
+        return config.viewMode ?? .windows
+    }
+
+    func setViewMode(_ mode: ViewMode) {
+        config.viewMode = mode
+        save()
+    }
+
+    func getTabWindowFrame() -> WindowFrame? {
+        return config.tabWindow
+    }
+
+    func setTabWindowFrame(_ frame: WindowFrame) {
+        config.tabWindow = frame
         save()
     }
 

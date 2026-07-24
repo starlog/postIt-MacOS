@@ -12,6 +12,11 @@ struct PostItNote: Codable, Identifiable, Equatable {
     var color: String
     var createdAt: Date
     var modifiedAt: Date
+    /// Closed notes stay in storage but are not shown as a window or tab.
+    /// Optional so notes.json written by older versions still decodes.
+    var closed: Bool?
+
+    var isClosed: Bool { return closed ?? false }
 
     init(
         id: UUID = UUID(),
@@ -24,7 +29,8 @@ struct PostItNote: Codable, Identifiable, Equatable {
         height: Double = 250,
         color: String = "#FFFF88",
         createdAt: Date = Date(),
-        modifiedAt: Date = Date()
+        modifiedAt: Date = Date(),
+        closed: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -37,5 +43,6 @@ struct PostItNote: Codable, Identifiable, Equatable {
         self.color = color
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
+        self.closed = closed
     }
 }

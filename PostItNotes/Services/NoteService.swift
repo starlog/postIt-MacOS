@@ -13,8 +13,26 @@ class NoteService {
         return (dataDirectory as NSString).appendingPathComponent("notes.json")
     }
 
+    /// Every note in storage, including closed ones.
     func getAllNotes() -> [PostItNote] {
         return notes
+    }
+
+    /// Notes that should currently be on screen.
+    func getOpenNotes() -> [PostItNote] {
+        return notes.filter { !$0.isClosed }
+    }
+
+    /// Notes the user closed - kept in storage, reopenable from the menu.
+    func getClosedNotes() -> [PostItNote] {
+        return notes.filter { $0.isClosed }
+    }
+
+    func setClosed(id: UUID, closed: Bool) {
+        guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[index].closed = closed
+        notes[index].modifiedAt = Date()
+        save()
     }
 
     @discardableResult

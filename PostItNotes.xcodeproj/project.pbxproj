@@ -17,6 +17,8 @@
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008; };
 		A10009 /* ClaudeAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011; };
 		A10010 /* FontSettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012; };
+		A10011 /* NoteEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10013; };
+		A10012 /* TabWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +34,8 @@
 		B10010 /* PostItNotes.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PostItNotes.entitlements; sourceTree = "<group>"; };
 		B10011 /* ClaudeAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAPIService.swift; sourceTree = "<group>"; };
 		B10012 /* FontSettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FontSettingsWindowController.swift; sourceTree = "<group>"; };
+		B10013 /* NoteEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorViewController.swift; sourceTree = "<group>"; };
+		B10014 /* TabWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabWindowController.swift; sourceTree = "<group>"; };
 		B10020 /* PostItNotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PostItNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -93,6 +97,8 @@
 				B10006 /* NoteWindowController.swift */,
 				B10007 /* HotkeySettingsWindowController.swift */,
 				B10012 /* FontSettingsWindowController.swift */,
+				B10013 /* NoteEditorViewController.swift */,
+				B10014 /* TabWindowController.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -183,6 +189,8 @@
 				A10007 /* HotkeySettingsWindowController.swift in Sources */,
 				A10009 /* ClaudeAPIService.swift in Sources */,
 				A10010 /* FontSettingsWindowController.swift in Sources */,
+				A10011 /* NoteEditorViewController.swift in Sources */,
+				A10012 /* TabWindowController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

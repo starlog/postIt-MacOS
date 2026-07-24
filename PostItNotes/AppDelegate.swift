@@ -8,9 +8,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var noteService: NoteService!
     private var hotkeyService: HotkeyService!
     private var noteWindows: [UUID: NoteWindowController] = [:]
+    private var tabWindowController: TabWindowController?
+    private var viewMode: ViewMode = .windows
     private var notesVisible = true
     private var hotkeySettingsController: HotkeySettingsWindowController?
     private var fontSettingsController: FontSettingsWindowController?
+    private weak var tabModeMenuItem: NSMenuItem?
+    private weak var showHideMenuItem: NSMenuItem?
 
     static func main() {
         let app = NSApplication.shared
@@ -28,6 +32,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("[PostItNotes] Data directory: %@", dataDir)
         noteService = NoteService(dataDirectory: dataDir)
         hotkeyService = HotkeyService()
+        viewMode = configService.getViewMode()
+        NSLog("[PostItNotes] View mode: %@", viewMode.rawValue)
 
         // Setup main menu with Edit menu for standard shortcuts
         setupMainMenu()
@@ -39,14 +45,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup global hotkey
         setupHotkey()
 
-        // Load existing notes
-        loadAllNotes()
-        NSLog("[PostItNotes] Loaded %d notes", noteWindows.count)
+        // Restore the last used presentation
+        if viewMode == .tabs {
+            openTabWindow()
+        } else {
+            loadAllNotes()
+            NSLog("[PostItNotes] Loaded %d notes", noteWindows.count)
 
-        // If no notes exist, create one
-        if noteWindows.isEmpty {
-            NSLog("[PostItNotes] No notes, creating new one")
-            createNewNote()
+            // Start with one note on a fresh install. If notes exist but are all
+            // closed, respect that and leave the screen empty.
+            if noteWindows.isEmpty && noteService.getAllNotes().isEmpty {
+                NSLog("[PostItNotes] No notes, creating new one")
+                createNewNote()
+            }
         }
         NSLog("[PostItNotes] Startup complete, %d windows", noteWindows.count)
     }
@@ -57,7 +68,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         toggleNotesVisibility()
-        if noteWindows.isEmpty {
+        if viewMode == .tabs {
+            if tabWindowController == nil {
+                openTabWindow()
+            }
+        } else if noteWindows.isEmpty {
             createNewNote()
         }
         return false
@@ -89,6 +104,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
+
+        // View menu
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        viewMenu.delegate = self
+
+        // Title flips between Hide/Show - kept current in menuNeedsUpdate
+        let showHideItem = NSMenuItem(title: "Hide Notes", action: #selector(toggleShowHideNotes), keyEquivalent: "h")
+        showHideItem.keyEquivalentModifierMask = [.command, .shift]
+        showHideItem.target = self
+        viewMenu.addItem(showHideItem)
+        showHideMenuItem = showHideItem
+
+        viewMenu.addItem(NSMenuItem.separator())
+
+        let tabModeItem = NSMenuItem(title: "Tab Mode", action: #selector(toggleTabMode), keyEquivalent: "t")
+        tabModeItem.keyEquivalentModifierMask = [.command, .shift]
+        tabModeItem.target = self
+        tabModeItem.state = viewMode == .tabs ? .on : .off
+        viewMenu.addItem(tabModeItem)
+        tabModeMenuItem = tabModeItem
+
+        viewMenu.addItem(NSMenuItem.separator())
+
+        let closedItem = NSMenuItem(title: "Closed Notes", action: nil, keyEquivalent: "")
+        closedItem.submenu = makeClosedNotesMenu()
+        viewMenu.addItem(closedItem)
+
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
 
         // Settings menu
         let settingsMenuItem = NSMenuItem()
@@ -195,6 +240,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let tabModeItem = NSMenuItem(title: "Tab Mode", action: #selector(toggleTabMode), keyEquivalent: "")
+        tabModeItem.target = self
+        tabModeItem.state = viewMode == .tabs ? .on : .off
+        menu.addItem(tabModeItem)
+
+        let closedItem = NSMenuItem(title: "Closed Notes", action: nil, keyEquivalent: "")
+        closedItem.submenu = makeClosedNotesMenu()
+        menu.addItem(closedItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         if notesVisible {
             let hideItem = NSMenuItem(title: "Hide Notes", action: #selector(hideAllNotes), keyEquivalent: "")
             hideItem.target = self
@@ -239,6 +295,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyService.register(modifiers: config.modifiers, keyCode: config.keyCode)
     }
 
+    @objc private func toggleShowHideNotes() {
+        toggleNotesVisibility()
+    }
+
     private func toggleNotesVisibility() {
         if notesVisible {
             hideAllNotes()
@@ -250,8 +310,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Note Management
 
     private func loadAllNotes() {
-        let notes = noteService.getAllNotes()
-        for note in notes {
+        for note in noteService.getOpenNotes() {
             openNoteWindow(note)
         }
     }
@@ -278,32 +337,170 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc func createNewNote() {
-        // Place note in center of main screen
+    /// Creates the note record itself (no window), so both modes place new notes identically.
+    @discardableResult
+    private func createNoteRecord() -> PostItNote {
         let screen = NSScreen.main ?? NSScreen.screens.first!
         let screenFrame = screen.visibleFrame
-        let offset = Double(noteWindows.count % 10) * 30
+        let offset = Double(noteService.getAllNotes().count % 10) * 30
         let noteWidth = 375.0
         let noteHeight = 250.0
         let x = Double(screenFrame.midX) - noteWidth / 2 + offset
         let y = Double(screenFrame.midY) - noteHeight / 2 + offset
-        let note = noteService.createNote(x: x, y: y, width: noteWidth, height: noteHeight)
-        openNoteWindow(note)
+        return noteService.createNote(x: x, y: y, width: noteWidth, height: noteHeight)
+    }
+
+    @objc func createNewNote() {
+        if viewMode == .tabs {
+            if tabWindowController == nil {
+                openTabWindow()
+            } else if !notesVisible {
+                showAllNotes()
+            }
+            tabWindowController?.addNewNote()
+            return
+        }
+        openNoteWindow(createNoteRecord())
+    }
+
+    // MARK: - Tab Mode
+
+    private func openTabWindow() {
+        if noteService.getAllNotes().isEmpty {
+            createNoteRecord()
+        }
+        // All notes closed: the tab window opens on its empty state instead
+        let controller = TabWindowController(noteService: noteService, configService: configService)
+        controller.tabDelegate = self
+        tabWindowController = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.window?.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        notesVisible = true
+    }
+
+    // MARK: - Closed Notes
+
+    /// Menu of closed notes; rebuilt on open via NSMenuDelegate so it is never stale.
+    private func makeClosedNotesMenu() -> NSMenu {
+        let menu = NSMenu(title: "Closed Notes")
+        menu.delegate = self
+        return menu
+    }
+
+    private func rebuildClosedNotesMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let closed = noteService.getClosedNotes()
+
+        guard !closed.isEmpty else {
+            let empty = NSMenuItem(title: "No closed notes", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+
+        for note in closed {
+            let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = title.isEmpty ? NoteEditorViewController.contentSummary(note.content) : title
+            let item = NSMenuItem(title: label, action: #selector(reopenClosedNote(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = note.id
+            menu.addItem(item)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        let reopenAll = NSMenuItem(title: "Reopen All", action: #selector(reopenAllClosedNotes), keyEquivalent: "")
+        reopenAll.target = self
+        menu.addItem(reopenAll)
+    }
+
+    @objc private func reopenClosedNote(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        reopenNote(id: id)
+    }
+
+    @objc private func reopenAllClosedNotes() {
+        for note in noteService.getClosedNotes() {
+            reopenNote(id: note.id)
+        }
+    }
+
+    private func reopenNote(id: UUID) {
+        if viewMode == .tabs {
+            if tabWindowController == nil {
+                openTabWindow()
+            } else if !notesVisible {
+                showAllNotes()
+            }
+            tabWindowController?.reopenNote(id: id)
+            return
+        }
+
+        noteService.setClosed(id: id, closed: false)
+        guard let note = noteService.getOpenNotes().first(where: { $0.id == id }) else { return }
+        if let existing = noteWindows[id] {
+            existing.window?.makeKeyAndOrderFront(nil)
+            existing.window?.orderFrontRegardless()
+        } else {
+            openNoteWindow(note)
+        }
+        notesVisible = true
+    }
+
+    /// Switches between one-window-per-note and the single tabbed window.
+    /// Notes are only re-presented here - nothing is written to notes.json.
+    @objc func toggleTabMode() {
+        if viewMode == .tabs {
+            tabWindowController?.window?.close()
+            tabWindowController = nil
+            viewMode = .windows
+            configService.setViewMode(.windows)
+            loadAllNotes()
+            if noteWindows.isEmpty {
+                createNewNote()
+            }
+            notesVisible = true
+        } else {
+            for (_, controller) in noteWindows {
+                controller.window?.close()
+            }
+            noteWindows.removeAll()
+            viewMode = .tabs
+            configService.setViewMode(.tabs)
+            openTabWindow()
+        }
+        tabModeMenuItem?.state = viewMode == .tabs ? .on : .off
+        NSLog("[PostItNotes] Switched to %@ mode", viewMode.rawValue)
     }
 
     @objc func showAllNotes() {
-        for (_, controller) in noteWindows {
-            controller.showWindow(nil)
-            controller.window?.makeKeyAndOrderFront(nil)
-            controller.window?.orderFrontRegardless()
+        if viewMode == .tabs {
+            if tabWindowController == nil {
+                openTabWindow()
+            } else {
+                tabWindowController?.showWindow(nil)
+                tabWindowController?.window?.makeKeyAndOrderFront(nil)
+                tabWindowController?.window?.orderFrontRegardless()
+            }
+        } else {
+            for (_, controller) in noteWindows {
+                controller.showWindow(nil)
+                controller.window?.makeKeyAndOrderFront(nil)
+                controller.window?.orderFrontRegardless()
+            }
         }
         NSApp.activate(ignoringOtherApps: true)
         notesVisible = true
     }
 
     @objc func hideAllNotes() {
-        for (_, controller) in noteWindows {
-            controller.window?.orderOut(nil)
+        if viewMode == .tabs {
+            tabWindowController?.window?.orderOut(nil)
+        } else {
+            for (_, controller) in noteWindows {
+                controller.window?.orderOut(nil)
+            }
         }
         notesVisible = false
     }
@@ -317,18 +514,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.message = "Choose data storage folder"
 
         if panel.runModal() == .OK, let url = panel.url {
-            // Close all current note windows
+            // Tear down whatever is on screen (windows or the tab window)
             for (_, controller) in noteWindows {
                 controller.window?.close()
             }
             noteWindows.removeAll()
+            tabWindowController?.window?.close()
+            tabWindowController = nil
 
             // Update config and reload
             configService.setDataDirectory(url.path)
             noteService.changeDataDirectory(url.path)
 
             // Load notes from new location
-            loadAllNotes()
+            if viewMode == .tabs {
+                openTabWindow()
+            } else {
+                loadAllNotes()
+                if noteWindows.isEmpty {
+                    createNewNote()
+                }
+            }
         }
     }
 
@@ -364,11 +570,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - NoteWindowControllerDelegate
 extension AppDelegate: NoteWindowControllerDelegate {
     func noteWindowDidClose(_ controller: NoteWindowController) {
+        let id = controller.getNoteId()
+        noteWindows.removeValue(forKey: id)
+        noteService.setClosed(id: id, closed: true)
+    }
+
+    func noteWindowDidDelete(_ controller: NoteWindowController) {
         noteWindows.removeValue(forKey: controller.getNoteId())
     }
 
     func noteWindowRequestNewNote(_ controller: NoteWindowController) {
         createNewNote()
+    }
+}
+
+// MARK: - NSMenuDelegate (keeps the Closed Notes list current)
+extension AppDelegate: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        switch menu.title {
+        case "Closed Notes":
+            rebuildClosedNotesMenu(menu)
+        case "View":
+            showHideMenuItem?.title = notesVisible ? "Hide Notes" : "Show Notes"
+            tabModeMenuItem?.state = viewMode == .tabs ? .on : .off
+        default:
+            break
+        }
+    }
+}
+
+// MARK: - TabWindowControllerDelegate
+extension AppDelegate: TabWindowControllerDelegate {
+    func tabWindowCreateNote(_ controller: TabWindowController) -> PostItNote {
+        return createNoteRecord()
+    }
+
+    func tabWindowRequestsHide(_ controller: TabWindowController) {
+        hideAllNotes()
     }
 }
 
