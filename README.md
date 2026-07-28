@@ -140,6 +140,31 @@ open /Applications/PostItNotes.app
 메모 데이터는 앱 번들이 아니라 `~/Library/Application Support/PostItNotes/`에 저장되므로
 앱을 교체해도 그대로 유지됩니다.
 
+### 첫 실행 시 보안 경고에 대해
+
+이 앱은 Developer ID 서명/공증(notarization) 없이 ad-hoc 서명으로 빌드됩니다.
+하지만 **소스를 직접 받아 빌드하면 "확인되지 않은 개발자" 경고는 뜨지 않습니다.**
+
+Gatekeeper 경고는 서명 상태가 아니라 `com.apple.quarantine` 속성 때문에 발생하는데,
+이 속성은 브라우저/메일/AirDrop 같은 다운로드 경로가 붙이는 것이라 컴파일러가 만든
+빌드 산출물에는 붙지 않습니다. (소스를 ZIP으로 받아도 산출물에는 전파되지 않습니다.)
+
+```bash
+# 경고 여부 확인 - com.apple.quarantine 이 없으면 그냥 실행됨
+xattr -l /Applications/PostItNotes.app
+```
+
+반대로 **빌드된 `.app`을 압축해 다른 사람에게 전달하면 경고가 다시 뜹니다.**
+받는 쪽에서 quarantine이 붙기 때문이며, 이때는 우클릭 > 열기로 한 번 허용하거나
+아래 명령으로 속성을 제거하면 됩니다.
+
+```bash
+xattr -dr com.apple.quarantine /Applications/PostItNotes.app
+```
+
+불특정 다수에게 빌드된 앱을 배포하려면 Apple Developer Program 가입 후
+Developer ID 서명 + notarization이 필요합니다.
+
 ## 요구사항
 
 - macOS 13.0+
