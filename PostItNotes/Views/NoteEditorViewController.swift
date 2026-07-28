@@ -52,6 +52,16 @@ class NoteEditorViewController: NSViewController {
     private enum TypingEdit { case insertion, deletion }
     private var lastTypingEdit: TypingEdit?
 
+    /// Held while the F button's font dialog is open.
+    private var fontDialog: FontSettingsWindowController?
+
+    /// Sub-cards of this note. Only the selected one is in the text view; the
+    /// rest sit here until their tab is clicked.
+    private var pages: [NotePage] = []
+    private var currentPageIndex = 0
+    private var pageTabBar: NSView!
+    private var pageTabStack: NSStackView!
+
     private let colorOptions: [(name: String, hex: String)] = [
         ("Yellow", "#FFFF88"),
         ("Green", "#88FF88"),
@@ -111,9 +121,13 @@ class NoteEditorViewController: NSViewController {
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 375, height: 250))
         view.wantsLayer = true
+        pages = note.effectivePages
+        currentPageIndex = note.selectedPageIndex
+        syncActivePageIntoNote()
         setupUI()
         applyColor(note.color)
         loadNoteData()
+        rebuildPageTabs()
     }
 
     private func setupUI() {
@@ -289,6 +303,53 @@ class NoteEditorViewController: NSViewController {
         titleField.delegate = self
         container.addSubview(titleField)
 
+        // Sub-card tab bar, directly under the title
+        pageTabBar = NSView()
+        pageTabBar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(pageTabBar)
+
+        let pageScroll = TabStripScrollView()
+        pageScroll.translatesAutoresizingMaskIntoConstraints = false
+        pageScroll.drawsBackground = false
+        pageScroll.hasHorizontalScroller = false
+        pageScroll.hasVerticalScroller = false
+        pageScroll.borderType = .noBorder
+        pageTabBar.addSubview(pageScroll)
+
+        pageTabStack = NSStackView()
+        pageTabStack.translatesAutoresizingMaskIntoConstraints = false
+        pageTabStack.orientation = .horizontal
+        pageTabStack.alignment = .centerY
+        pageTabStack.spacing = 2
+        pageScroll.documentView = pageTabStack
+
+        let addPageBtn = NSButton(frame: .zero)
+        addPageBtn.translatesAutoresizingMaskIntoConstraints = false
+        addPageBtn.isBordered = false
+        addPageBtn.title = "+"
+        addPageBtn.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        addPageBtn.target = self
+        addPageBtn.action = #selector(addPageClicked(_:))
+        addPageBtn.toolTip = "새 서브 카드"
+        // Distinct from the toolbar's new-note "+" for VoiceOver.
+        addPageBtn.setAccessibilityLabel("새 서브 카드 추가")
+        pageTabBar.addSubview(addPageBtn)
+
+        NSLayoutConstraint.activate([
+            addPageBtn.trailingAnchor.constraint(equalTo: pageTabBar.trailingAnchor, constant: -4),
+            addPageBtn.centerYAnchor.constraint(equalTo: pageTabBar.centerYAnchor),
+            addPageBtn.widthAnchor.constraint(equalToConstant: 18),
+
+            pageScroll.leadingAnchor.constraint(equalTo: pageTabBar.leadingAnchor, constant: 4),
+            pageScroll.trailingAnchor.constraint(equalTo: addPageBtn.leadingAnchor, constant: -2),
+            pageScroll.topAnchor.constraint(equalTo: pageTabBar.topAnchor),
+            pageScroll.bottomAnchor.constraint(equalTo: pageTabBar.bottomAnchor),
+
+            pageTabStack.leadingAnchor.constraint(equalTo: pageScroll.contentView.leadingAnchor),
+            pageTabStack.centerYAnchor.constraint(equalTo: pageScroll.contentView.centerYAnchor),
+            pageTabStack.heightAnchor.constraint(equalToConstant: 18)
+        ])
+
         // Separator
         separator = NSBox()
         separator.translatesAutoresizingMaskIntoConstraints = false
@@ -354,7 +415,12 @@ class NoteEditorViewController: NSViewController {
             titleField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             titleField.heightAnchor.constraint(equalToConstant: 22),
 
-            separator.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 2),
+            pageTabBar.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 1),
+            pageTabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            pageTabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            pageTabBar.heightAnchor.constraint(equalToConstant: 22),
+
+            separator.topAnchor.constraint(equalTo: pageTabBar.bottomAnchor, constant: 1),
             separator.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
             separator.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
 
@@ -403,6 +469,173 @@ class NoteEditorViewController: NSViewController {
     func focusContent() {
         view.window?.makeFirstResponder(contentTextView)
     }
+
+    // MARK: - Sub-cards
+
+    /// Copies the visible sub-card into the note's own content/rtfContent.
+    /// Everything downstream - markdown, AI, tab labels, image markers - keeps
+    /// reading those, so only the visible page needs to be mirrored.
+    private func syncActivePageIntoNote() {
+        guard pages.indices.contains(currentPageIndex) else { return }
+        note.content = pages[currentPageIndex].content
+        note.rtfContent = pages[currentPageIndex].rtfContent
+    }
+
+    private func rebuildPageTabs() {
+        guard pageTabStack != nil else { return }
+        for view in pageTabStack.arrangedSubviews {
+            pageTabStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        let base = NSColor(hex: note.color) ?? NSColor(red: 1, green: 1, blue: 0.53, alpha: 1)
+        for (index, page) in pages.enumerated() {
+            let selected = index == currentPageIndex
+            let tab = PageTabButton(frame: .zero)
+            tab.pageIndex = index
+            tab.editor = self
+            tab.isBordered = false
+            tab.title = " \(page.name) "
+            tab.font = NSFont.systemFont(ofSize: 10, weight: selected ? .bold : .regular)
+            tab.target = self
+            tab.action = #selector(pageTabClicked(_:))
+            tab.wantsLayer = true
+            tab.layer?.cornerRadius = 4
+            tab.layer?.backgroundColor = selected
+                ? base.blended(withFraction: 0.22, of: .black)?.cgColor
+                : base.blended(withFraction: 0.45, of: .white)?.cgColor
+            tab.toolTip = page.name
+            tab.setAccessibilityLabel("서브 카드 \(page.name)")
+            tab.menu = makePageMenu(for: index)
+            pageTabStack.addArrangedSubview(tab)
+            tab.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        }
+        pageTabStack.layoutSubtreeIfNeeded()
+    }
+
+    /// Right-click menu of a sub-card tab.
+    private func makePageMenu(for index: Int) -> NSMenu {
+        let menu = NSMenu()
+        // Otherwise AppKit re-enables Delete on the last remaining sub-card.
+        menu.autoenablesItems = false
+
+        let rename = NSMenuItem(title: "이름 변경...", action: #selector(renamePageFromMenu(_:)), keyEquivalent: "")
+        rename.target = self
+        rename.tag = index
+        menu.addItem(rename)
+
+        let delete = NSMenuItem(title: "서브 카드 삭제", action: #selector(deletePageFromMenu(_:)), keyEquivalent: "")
+        delete.target = self
+        delete.tag = index
+        delete.isEnabled = pages.count > 1
+        menu.addItem(delete)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let add = NSMenuItem(title: "새 서브 카드", action: #selector(addPageFromMenu(_:)), keyEquivalent: "")
+        add.target = self
+        menu.addItem(add)
+        return menu
+    }
+
+    @objc private func pageTabClicked(_ sender: NSButton) {
+        guard let tab = sender as? PageTabButton else { return }
+        selectPage(at: tab.pageIndex)
+    }
+
+    @objc private func addPageClicked(_ sender: NSButton) {
+        addPage()
+    }
+
+    func selectPage(at index: Int) {
+        guard pages.indices.contains(index), index != currentPageIndex else { return }
+        saveContent()
+        currentPageIndex = index
+        showCurrentPage()
+    }
+
+    func addPage() {
+        saveContent()
+        pages.append(NotePage(name: nextPageName()))
+        currentPageIndex = pages.count - 1
+        showCurrentPage()
+        focusContent()
+    }
+
+    func renamePage(at index: Int) {
+        guard pages.indices.contains(index) else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "서브 카드 이름"
+        alert.addButton(withTitle: "확인")
+        alert.addButton(withTitle: "취소")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        field.stringValue = pages[index].name
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        pages[index].name = name
+        note.pages = pages
+        rebuildPageTabs()
+        noteService.updateNote(note)
+    }
+
+    func deletePage(at index: Int) {
+        // A note always keeps at least one sub-card - deleting the last one
+        // would be deleting the note, which the trash button already does.
+        guard pages.count > 1, pages.indices.contains(index) else {
+            NSSound.beep()
+            return
+        }
+
+        let page = pages[index]
+        if !page.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "서브 카드 '\(page.name)'을(를) 삭제할까요?"
+            alert.informativeText = "이 서브 카드의 내용은 되돌릴 수 없습니다."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "삭제")
+            alert.addButton(withTitle: "취소")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+
+        // Flush the visible page first, unless it is the one being removed.
+        if index != currentPageIndex { saveContent() }
+        pages.remove(at: index)
+        if index < currentPageIndex { currentPageIndex -= 1 }
+        currentPageIndex = min(currentPageIndex, pages.count - 1)
+        showCurrentPage()
+    }
+
+    /// Puts the selected sub-card on screen and writes the new selection out.
+    private func showCurrentPage() {
+        note.pages = pages
+        note.selectedPage = currentPageIndex
+        syncActivePageIntoNote()
+        loadNoteData()
+        // Each sub-card is its own document: keeping the stack would let Cmd+Z
+        // pour one sub-card's text into another.
+        noteUndoManager.removeAllActions()
+        lastTypingEdit = nil
+        if isMarkdownRendered { renderMarkdown() }
+        rebuildPageTabs()
+        noteService.updateNote(note)
+        delegate?.noteEditorDidChangeTitle(self)
+    }
+
+    private func nextPageName() -> String {
+        let used = Set(pages.map { $0.name })
+        var number = pages.count + 1
+        while used.contains("\(number)") { number += 1 }
+        return "\(number)"
+    }
+
+    @objc func renamePageFromMenu(_ sender: NSMenuItem) { renamePage(at: sender.tag) }
+    @objc func deletePageFromMenu(_ sender: NSMenuItem) { deletePage(at: sender.tag) }
+    @objc func addPageFromMenu(_ sender: NSMenuItem) { addPage() }
 
     private func loadNoteData() {
         titleField.stringValue = note.title
@@ -502,6 +735,15 @@ class NoteEditorViewController: NSViewController {
         } else if let rtfData = textStorage.rtf(from: fullRange, documentAttributes: [:]) {
             note.rtfContent = rtfData.base64EncodedString()
         }
+
+        // What is on screen belongs to the selected sub-card.
+        if pages.indices.contains(currentPageIndex) {
+            pages[currentPageIndex].content = note.content
+            pages[currentPageIndex].rtfContent = note.rtfContent
+        }
+        note.pages = pages
+        note.selectedPage = currentPageIndex
+
         noteService.updateNote(note)
 
         // Untitled notes are labelled from their content, so the tab needs a refresh
@@ -646,13 +888,20 @@ class NoteEditorViewController: NSViewController {
     }
 
     private func changeFontSize(delta: CGFloat) {
-        markdownFontSize = max(8, markdownFontSize + delta)
+        // Stepping from the size the note really uses keeps the markdown
+        // preview in step with the editor.
+        markdownFontSize = max(8, effectiveFontSize + delta)
         if isMarkdownRendered {
             renderMarkdown()
         } else {
             guard let textStorage = contentTextView.textStorage else { return }
             let range = NSRange(location: 0, length: textStorage.length)
-            guard range.length > 0 else { return }
+            // Nothing typed yet: set the size the note will start typing at.
+            guard range.length > 0 else {
+                let base = contentTextView.font ?? NSFont.systemFont(ofSize: markdownFontSize)
+                contentTextView.font = NSFontManager.shared.convert(base, toSize: markdownFontSize)
+                return
+            }
             guard contentTextView.shouldChangeText(in: range, replacementString: nil) else { return }
             textStorage.beginEditing()
             textStorage.enumerateAttribute(.font, in: range) { value, attrRange, _ in
@@ -667,52 +916,93 @@ class NoteEditorViewController: NSViewController {
         }
     }
 
-    @objc private func fontSelectClicked(_ sender: NSButton) {
-        let fonts: [(display: String, name: String)] = [
-            ("시스템 기본", "System"),
-            ("Apple SD 고딕 Neo", "AppleSDGothicNeo-Regular"),
-            ("나눔고딕", "NanumGothic"),
-            ("나눔명조", "NanumMyeongjo"),
-            ("나눔바른고딕", "NanumBarunGothic"),
-            ("D2 코딩", "D2Coding"),
-            ("Apple 명조", "AppleMyungjo"),
-            ("나눔손글씨 펜", "NanumPen")
-        ]
-        let menu = NSMenu()
-        for font in fonts {
-            let item = NSMenuItem(title: font.display, action: #selector(fontSelected(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = font.name
-            menu.addItem(item)
+    /// Font the note is actually using, rather than the last one picked here -
+    /// a note loaded from storage keeps whatever it was saved with.
+    private var effectiveFont: NSFont? {
+        if isMarkdownRendered {
+            return NSFont(name: markdownFontName, size: markdownFontSize)
+                ?? NSFont.systemFont(ofSize: markdownFontSize)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: sender.bounds.minX, y: sender.bounds.minY), in: sender)
+        if let storage = contentTextView.textStorage, storage.length > 0,
+           let font = storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont {
+            return font
+        }
+        return contentTextView.font
     }
 
-    @objc private func fontSelected(_ sender: NSMenuItem) {
-        guard let fontName = sender.representedObject as? String else { return }
-        markdownFontName = fontName
+    private var effectiveFontSize: CGFloat {
+        return effectiveFont?.pointSize ?? markdownFontSize
+    }
+
+    /// Name this note's font goes by in the picker, so the dialog opens on the
+    /// entry the note is really using.
+    private var effectiveFontChoiceName: String {
+        guard let font = effectiveFont else { return markdownFontName }
+        if font.fontName.hasPrefix(".") { return "System" }
+        if FontSettingsWindowController.fontOptions.contains(where: { $0.name == font.fontName }) {
+            return font.fontName
+        }
+        return markdownFontName
+    }
+
+    /// The F button opens a font + size dialog for this note.
+    @objc private func fontSelectClicked(_ sender: NSButton) {
+        let current = FontConfig(fontName: effectiveFontChoiceName, fontSize: Double(effectiveFontSize.rounded()))
+        let dialog = FontSettingsWindowController(currentFont: current, title: "Note Font")
+        dialog.onSave = { [weak self] config in
+            self?.applyFont(name: config.fontName, size: CGFloat(config.fontSize))
+            self?.fontDialog = nil
+        }
+        fontDialog = dialog
+        dialog.showWindow(nil)
+        dialog.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private static func font(named name: String, size: CGFloat) -> NSFont {
+        if name == "System" { return NSFont.systemFont(ofSize: size) }
+        return NSFont(name: name, size: size) ?? NSFont.systemFont(ofSize: size)
+    }
+
+    /// Applies one family and size to the whole note. Bold and italic set on
+    /// individual words are kept - only the family and size are replaced.
+    private func applyFont(name: String, size: CGFloat) {
+        let newSize = max(8, size)
+        markdownFontName = name
+        markdownFontSize = newSize
+
         if isMarkdownRendered {
             renderMarkdown()
-        } else {
-            guard let textStorage = contentTextView.textStorage else { return }
-            let range = NSRange(location: 0, length: textStorage.length)
-            guard range.length > 0 else { return }
-            guard contentTextView.shouldChangeText(in: range, replacementString: nil) else { return }
-            textStorage.beginEditing()
-            textStorage.enumerateAttribute(.font, in: range) { value, attrRange, _ in
-                let currentFont = (value as? NSFont) ?? NSFont.systemFont(ofSize: 13)
-                let size = currentFont.pointSize
-                let newFont: NSFont
-                if fontName == "System" {
-                    newFont = NSFont.systemFont(ofSize: size)
-                } else {
-                    newFont = NSFont(name: fontName, size: size) ?? NSFont.systemFont(ofSize: size)
-                }
-                textStorage.addAttribute(.font, value: newFont, range: attrRange)
-            }
-            textStorage.endEditing()
-            contentTextView.didChangeText()
+            return
         }
+        guard let textStorage = contentTextView.textStorage else { return }
+        let picked = Self.font(named: name, size: newSize)
+        let range = NSRange(location: 0, length: textStorage.length)
+
+        // Nothing typed yet: set what the note will start typing with.
+        guard range.length > 0 else {
+            contentTextView.font = picked
+            return
+        }
+
+        guard contentTextView.shouldChangeText(in: range, replacementString: nil) else { return }
+        textStorage.beginEditing()
+        textStorage.enumerateAttribute(.font, in: range) { value, attrRange, _ in
+            var applied = picked
+            if let existing = value as? NSFont {
+                let traits = NSFontManager.shared.traits(of: existing)
+                var keep: NSFontTraitMask = []
+                if traits.contains(.boldFontMask) { keep.insert(.boldFontMask) }
+                if traits.contains(.italicFontMask) { keep.insert(.italicFontMask) }
+                if !keep.isEmpty {
+                    applied = NSFontManager.shared.convert(picked, toHaveTrait: keep)
+                }
+            }
+            textStorage.addAttribute(.font, value: applied, range: attrRange)
+        }
+        textStorage.endEditing()
+        contentTextView.didChangeText()
+        contentTextView.font = picked
     }
 
     // MARK: - Markdown
@@ -917,6 +1207,7 @@ class NoteEditorViewController: NSViewController {
         guard let color = NSColor(hex: hex) else { return }
         view.layer?.backgroundColor = color.cgColor
         titleBarView?.layer?.backgroundColor = color.blended(withFraction: 0.1, of: .black)?.cgColor
+        rebuildPageTabs()
         if isMarkdownRendered {
             renderMarkdown()
         }
@@ -1310,6 +1601,23 @@ class NoteEditorViewController: NSViewController {
     deinit {
         NotificationCenter.default.removeObserver(self)
         markdownWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "deleteImage")
+    }
+}
+
+// MARK: - Sub-card tab: right-click to rename or delete, double-click to rename
+class PageTabButton: NSButton {
+    var pageIndex = 0
+    weak var editor: NoteEditorViewController?
+
+    // The right-click menu is assigned in rebuildPageTabs so that both the
+    // mouse and assistive tools can reach it.
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            editor?.renamePage(at: pageIndex)
+            return
+        }
+        super.mouseDown(with: event)
     }
 }
 

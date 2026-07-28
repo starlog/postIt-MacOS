@@ -6,13 +6,15 @@ protocol FontSettingsDelegate: AnyObject {
 
 class FontSettingsWindowController: NSWindowController {
     weak var fontSettingsDelegate: FontSettingsDelegate?
+    /// Set instead of the delegate when the picked font applies to one note.
+    var onSave: ((FontConfig) -> Void)?
 
     private var fontPopup: NSPopUpButton!
     private var sizeField: NSTextField!
     private var sizeStepper: NSStepper!
     private var previewLabel: NSTextField!
 
-    private let fontOptions: [(display: String, name: String)] = [
+    static let fontOptions: [(display: String, name: String)] = [
         ("시스템 기본", "System"),
         ("Apple SD 고딕 Neo", "AppleSDGothicNeo-Regular"),
         ("나눔고딕", "NanumGothic"),
@@ -23,16 +25,19 @@ class FontSettingsWindowController: NSWindowController {
         ("나눔손글씨 펜", "NanumPen")
     ]
 
-    init(currentFont: FontConfig) {
+    init(currentFont: FontConfig, title: String = "Set Default Font") {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Set Default Font"
+        window.title = title
         window.center()
         window.isReleasedWhenClosed = false
+        // Notes float above normal windows - without this the dialog opens
+        // behind them.
+        window.level = .modalPanel
 
         super.init(window: window)
         setupUI(currentFont: currentFont)
@@ -53,11 +58,11 @@ class FontSettingsWindowController: NSWindowController {
         // Font popup
         fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         fontPopup.translatesAutoresizingMaskIntoConstraints = false
-        for font in fontOptions {
+        for font in Self.fontOptions {
             fontPopup.addItem(withTitle: font.display)
         }
         // Select current
-        if let idx = fontOptions.firstIndex(where: { $0.name == currentFont.fontName }) {
+        if let idx = Self.fontOptions.firstIndex(where: { $0.name == currentFont.fontName }) {
             fontPopup.selectItem(at: idx)
         }
         fontPopup.target = self
@@ -146,7 +151,7 @@ class FontSettingsWindowController: NSWindowController {
 
     private func updatePreview() {
         let idx = fontPopup.indexOfSelectedItem
-        let fontName = fontOptions[idx].name
+        let fontName = Self.fontOptions[idx].name
         let size = CGFloat(sizeStepper.integerValue)
         let font: NSFont
         if fontName == "System" {
@@ -168,10 +173,11 @@ class FontSettingsWindowController: NSWindowController {
 
     @objc private func saveClicked(_ sender: NSButton) {
         let idx = fontPopup.indexOfSelectedItem
-        let fontName = fontOptions[idx].name
+        let fontName = Self.fontOptions[idx].name
         let size = Double(sizeStepper.integerValue)
         let config = FontConfig(fontName: fontName, fontSize: size)
         fontSettingsDelegate?.fontSettingsDidSave(fontConfig: config)
+        onSave?(config)
         window?.close()
     }
 
