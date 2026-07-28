@@ -27,6 +27,7 @@ class NoteEditorViewController: NSViewController {
     private var scrollView: NSScrollView!
     private var markdownWebView: WKWebView!
     private var markdownToggleBtn: NSButton!
+    private var wrapToggleBtn: NSButton!
     private var isMarkdownRendered = false
     private var separator: NSBox!
     private var markdownFontName = "System"
@@ -126,6 +127,7 @@ class NoteEditorViewController: NSViewController {
         syncActivePageIntoNote()
         setupUI()
         applyColor(note.color)
+        applyWordWrap()
         loadNoteData()
         rebuildPageTabs()
     }
@@ -202,6 +204,18 @@ class NoteEditorViewController: NSViewController {
         fontBtn.action = #selector(fontSelectClicked(_:))
         fontBtn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         titleBarView.addSubview(fontBtn)
+
+        // Word wrap toggle
+        wrapToggleBtn = NSButton(frame: .zero)
+        wrapToggleBtn.translatesAutoresizingMaskIntoConstraints = false
+        wrapToggleBtn.isBordered = false
+        wrapToggleBtn.title = "\u{21A9}"
+        wrapToggleBtn.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        wrapToggleBtn.target = self
+        wrapToggleBtn.action = #selector(wrapToggleClicked(_:))
+        wrapToggleBtn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        wrapToggleBtn.setAccessibilityLabel("줄 바꿈 전환")
+        titleBarView.addSubview(wrapToggleBtn)
 
         // Markdown toggle button
         markdownToggleBtn = NSButton(frame: .zero)
@@ -281,7 +295,10 @@ class NoteEditorViewController: NSViewController {
             markdownToggleBtn.trailingAnchor.constraint(equalTo: aiBtn.leadingAnchor, constant: -2),
             markdownToggleBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
             markdownToggleBtn.widthAnchor.constraint(equalToConstant: 26),
-            fontBtn.trailingAnchor.constraint(equalTo: markdownToggleBtn.leadingAnchor, constant: -2),
+            wrapToggleBtn.trailingAnchor.constraint(equalTo: markdownToggleBtn.leadingAnchor, constant: -2),
+            wrapToggleBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
+            wrapToggleBtn.widthAnchor.constraint(equalToConstant: 20),
+            fontBtn.trailingAnchor.constraint(equalTo: wrapToggleBtn.leadingAnchor, constant: -2),
             fontBtn.centerYAnchor.constraint(equalTo: titleBarView.centerYAnchor),
             fontBtn.widthAnchor.constraint(equalToConstant: 20),
             fontPlusBtn.trailingAnchor.constraint(equalTo: fontBtn.leadingAnchor, constant: 0),
@@ -560,6 +577,33 @@ class NoteEditorViewController: NSViewController {
         currentPageIndex = pages.count - 1
         showCurrentPage()
         focusContent()
+    }
+
+    /// Moves a sub-card to wherever it was dropped on the tab strip. The point
+    /// is in window coordinates, as it comes off the drag event.
+    func movePage(from index: Int, toDropPoint windowPoint: NSPoint) {
+        guard pages.indices.contains(index) else { return }
+
+        // Insertion slot: every tab whose middle the drop landed past.
+        let point = pageTabStack.convert(windowPoint, from: nil)
+        var insertion = 0
+        for tab in pageTabStack.arrangedSubviews where point.x > tab.frame.midX {
+            insertion += 1
+        }
+        // Removing the dragged tab first shifts every later slot down one.
+        var target = insertion
+        if target > index { target -= 1 }
+        guard target != index, pages.indices.contains(target) else { return }
+
+        let selectedId = pages[currentPageIndex].id
+        let page = pages.remove(at: index)
+        pages.insert(page, at: target)
+        currentPageIndex = pages.firstIndex { $0.id == selectedId } ?? target
+
+        note.pages = pages
+        note.selectedPage = currentPageIndex
+        rebuildPageTabs()
+        noteService.updateNote(note)
     }
 
     func renamePage(at index: Int) {
@@ -1006,6 +1050,44 @@ class NoteEditorViewController: NSViewController {
     }
 
     // MARK: - Markdown
+
+    // MARK: - Word wrap
+
+    @objc private func wrapToggleClicked(_ sender: NSButton) {
+        note.wordWrap = !note.wrapsText
+        applyWordWrap()
+        noteService.updateNote(note)
+    }
+
+    /// Wrapping on: the text container follows the view's width. Off: the
+    /// container grows with the longest line and the scroll view gains a
+    /// horizontal scroller.
+    private func applyWordWrap() {
+        guard let container = contentTextView.textContainer else { return }
+        let wraps = note.wrapsText
+        let unbounded = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
+        contentTextView.maxSize = unbounded
+        if wraps {
+            scrollView.hasHorizontalScroller = false
+            contentTextView.isHorizontallyResizable = false
+            contentTextView.autoresizingMask = [.width]
+            container.widthTracksTextView = true
+            container.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+            contentTextView.setFrameSize(NSSize(width: scrollView.contentSize.width, height: contentTextView.frame.height))
+        } else {
+            scrollView.hasHorizontalScroller = true
+            contentTextView.isHorizontallyResizable = true
+            contentTextView.autoresizingMask = []
+            container.widthTracksTextView = false
+            container.containerSize = unbounded
+        }
+
+        wrapToggleBtn?.alphaValue = wraps ? 1.0 : 0.4
+        wrapToggleBtn?.toolTip = wraps ? "줄 바꿈 켜짐 - 끄려면 클릭" : "줄 바꿈 꺼짐 - 켜려면 클릭"
+        contentTextView.needsLayout = true
+        contentTextView.needsDisplay = true
+    }
 
     @objc private func markdownToggleClicked(_ sender: NSButton) {
         if isMarkdownRendered {
@@ -1612,12 +1694,46 @@ class PageTabButton: NSButton {
     // The right-click menu is assigned in rebuildPageTabs so that both the
     // mouse and assistive tools can reach it.
 
+    /// Tracks the mouse so a tab can be dragged sideways to reorder. A press
+    /// that never moves is passed on as a plain click, so selecting a sub-card
+    /// still works.
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2 {
             editor?.renamePage(at: pageIndex)
             return
         }
-        super.mouseDown(with: event)
+        guard let window = self.window else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        let start = event.locationInWindow
+        var isDragging = false
+        var lastPoint = start
+
+        trackingLoop: while true {
+            guard let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) else { break }
+            switch next.type {
+            case .leftMouseDragged:
+                lastPoint = next.locationInWindow
+                if !isDragging && abs(lastPoint.x - start.x) > 3 {
+                    isDragging = true
+                    alphaValue = 0.5
+                }
+            case .leftMouseUp:
+                lastPoint = next.locationInWindow
+                break trackingLoop
+            default:
+                break trackingLoop
+            }
+        }
+
+        alphaValue = 1.0
+        if isDragging {
+            editor?.movePage(from: pageIndex, toDropPoint: lastPoint)
+        } else {
+            sendAction(self.action, to: self.target)
+        }
     }
 }
 

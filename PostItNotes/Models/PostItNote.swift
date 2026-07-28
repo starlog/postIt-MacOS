@@ -37,6 +37,11 @@ struct PostItNote: Codable, Identifiable, Equatable {
     var pages: [NotePage]?
     /// Sub-card that was on screen last.
     var selectedPage: Int?
+    /// Whether long lines wrap in the editor. Optional so older notes decode;
+    /// nil means wrapping, which is how the app always behaved.
+    var wordWrap: Bool?
+
+    var wrapsText: Bool { return wordWrap ?? true }
 
     var isClosed: Bool { return closed ?? false }
 
@@ -66,7 +71,8 @@ struct PostItNote: Codable, Identifiable, Equatable {
         modifiedAt: Date = Date(),
         closed: Bool? = nil,
         pages: [NotePage]? = nil,
-        selectedPage: Int? = nil
+        selectedPage: Int? = nil,
+        wordWrap: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -82,5 +88,6 @@ struct PostItNote: Codable, Identifiable, Equatable {
         self.closed = closed
         self.pages = pages
         self.selectedPage = selectedPage
+        self.wordWrap = wordWrap
     }
 }
