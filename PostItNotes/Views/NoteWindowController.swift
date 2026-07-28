@@ -11,7 +11,8 @@ protocol NoteWindowControllerDelegate: AnyObject {
 /// Floating single-note window. All editing behaviour lives in
 /// NoteEditorViewController; this only owns the window chrome and geometry.
 class NoteWindowController: NSWindowController {
-    private let editor: NoteEditorViewController
+    /// The Format menu reaches the note body through this.
+    let editor: NoteEditorViewController
     weak var delegate: NoteWindowControllerDelegate?
 
     init(note: PostItNote, noteService: NoteService) {
@@ -33,6 +34,7 @@ class NoteWindowController: NSWindowController {
         window.backgroundColor = .clear
 
         super.init(window: window)
+        window.delegate = self
         NSLog("[PostItNotes] Creating note window at (%f, %f) size (%fx%f)", note.x, note.y, note.width, note.height)
 
         editor.delegate = self
@@ -51,8 +53,7 @@ class NoteWindowController: NSWindowController {
 
         NSLog("[PostItNotes] Window frame: %@, isVisible: %d", NSStringFromRect(window.frame), window.isVisible)
 
-        NotificationCenter.default.addObserver(self, selector: #selector(windowDidMove(_:)), name: NSWindow.didMoveNotification, object: window)
-        NotificationCenter.default.addObserver(self, selector: #selector(windowDidResize(_:)), name: NSWindow.didResizeNotification, object: window)
+        // Geometry is persisted from the NSWindowDelegate callbacks below.
     }
 
     required init?(coder: NSCoder) {
@@ -61,18 +62,6 @@ class NoteWindowController: NSWindowController {
 
     func getNoteId() -> UUID {
         return editor.noteId
-    }
-
-    func toggleBold(_ sender: Any?) {
-        editor.toggleBold(sender)
-    }
-
-    func toggleItalic(_ sender: Any?) {
-        editor.toggleItalic(sender)
-    }
-
-    func toggleUnderline(_ sender: Any?) {
-        editor.toggleUnderline(sender)
     }
 
     /// Repositions the window during a layout pass. The move/resize
@@ -107,13 +96,13 @@ class NoteWindowController: NSWindowController {
         window.setFrameOrigin(newOrigin)
     }
 
-    @objc private func windowDidMove(_ notification: Notification) {
+    func windowDidMove(_ notification: Notification) {
         guard !isApplyingLayout, let frame = window?.frame else { return }
         editor.updateGeometry(x: Double(frame.origin.x), y: Double(frame.origin.y),
                               width: Double(frame.size.width), height: Double(frame.size.height))
     }
 
-    @objc private func windowDidResize(_ notification: Notification) {
+    func windowDidResize(_ notification: Notification) {
         guard !isApplyingLayout, let frame = window?.frame else { return }
         editor.updateGeometry(x: Double(frame.origin.x), y: Double(frame.origin.y),
                               width: Double(frame.size.width), height: Double(frame.size.height))
@@ -121,6 +110,15 @@ class NoteWindowController: NSWindowController {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+}
+
+// MARK: - NSWindowDelegate
+extension NoteWindowController: NSWindowDelegate {
+    /// Hands the note's own stack to the title field's editor too, so one note
+    /// means one undo history no matter which field the edit happened in.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        return editor.contentUndoManager
     }
 }
 
@@ -159,18 +157,7 @@ class NoteWindow: NSWindow {
         contentView?.registerForDraggedTypes([.fileURL])
     }
 
-    override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if flags.contains(.command) {
-            if let controller = windowController as? NoteWindowController {
-                switch event.charactersIgnoringModifiers {
-                case "b": controller.toggleBold(nil); return
-                case "i": controller.toggleItalic(nil); return
-                case "u": controller.toggleUnderline(nil); return
-                default: break
-                }
-            }
-        }
-        super.keyDown(with: event)
-    }
+    // Bold/italic/underline/strikethrough live in the Format menu: while the
+    // text view is first responder it swallows the key event, so keyDown here
+    // would never see it. Menu key equivalents are checked before that.
 }

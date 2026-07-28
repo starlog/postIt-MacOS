@@ -47,14 +47,19 @@ macOS 네이티브 포스트잇 메모 애플리케이션
 - `Cmd+Shift+]` / `Cmd+Shift+[`: 다음/이전 탭
 
 ### 텍스트 편집
-- 리치 텍스트 지원 (Cmd+B 볼드, Cmd+I 이탈릭, Cmd+U 밑줄)
+- 리치 텍스트 지원 — **Format 메뉴**에서 적용 (적용할 텍스트를 먼저 선택해야 함)
+  - `Cmd+B` 볼드 / `Cmd+I` 이탈릭 / `Cmd+U` 밑줄 / `Cmd+Shift+X` 취소선
+- 실행 취소/재실행 (`Cmd+Z` / `Cmd+Shift+Z`), 메모마다 독립된 최대 100단계 스택
+  - 입력뿐 아니라 볼드·이탈릭·밑줄·취소선·폰트 변경도 되돌리기 가능
+  - 입력 / 삭제 / 서식이 각각 별도 단계로 끊겨서, 지운 글자를 `Cmd+Z`로 되살려도
+    직전에 입력한 내용이 함께 사라지지 않음
 - 한국어 폰트 선택 (Apple SD 고딕 Neo, 나눔고딕, 나눔명조, 나눔바른고딕, D2 코딩, Apple 명조, 나눔손글씨 펜)
 - 폰트 크기 조절 (A-/A+ 버튼)
 - 기본 폰트 및 크기 설정 (Settings 메뉴)
 
 ### 마크다운 미리보기
 - MD 버튼으로 마크다운 렌더링/편집 모드 전환
-- 헤더, 볼드, 이탈릭, 코드블록, 인라인 코드 지원
+- 헤더, 볼드, 이탈릭, 취소선(`~~텍스트~~`), 코드블록, 인라인 코드 지원
 - 테이블 렌더링 지원
 - 블록인용, 리스트 (순서/비순서), 수평선 지원
 - 이미지 렌더링 (로컬 파일 경로)
@@ -87,7 +92,9 @@ macOS 네이티브 포스트잇 메모 애플리케이션
 - 메뉴바 상태 아이콘으로 빠른 접근
 
 ### 메뉴
-- **상단 메뉴바**: PostItNotes, Edit, View, Settings
+- **상단 메뉴바**: PostItNotes, Edit, Format, View, Settings
+- **Edit 메뉴**: Undo (Cmd+Z), Redo (Cmd+Shift+Z), Cut, Copy, Paste, Select All
+- **Format 메뉴**: Bold (Cmd+B), Italic (Cmd+I), Underline (Cmd+U), Strikethrough (Cmd+Shift+X)
 - **View 메뉴**: Hide/Show Notes (Cmd+Shift+H), Organize Notes (Cmd+Shift+O), Move to Screen, Tab Mode (Cmd+Shift+T), Closed Notes
 - **Settings 메뉴**: Set Hotkey, Set Default Font, Data Folder
 - **상태바 메뉴**: New Note, Organize Notes, Move to Screen, Tab Mode, Closed Notes, Show/Hide Notes, Data Folder, Hotkey Settings, Quit

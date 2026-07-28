@@ -95,8 +95,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Edit menu
         let editMenuItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
-        editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        // Routed explicitly rather than through the responder chain, because the
+        // note body keeps its own undo stack (see NoteEditorViewController).
+        let undoItem = NSMenuItem(title: "Undo", action: #selector(performUndo), keyEquivalent: "z")
+        undoItem.target = self
+        editMenu.addItem(undoItem)
+        let redoItem = NSMenuItem(title: "Redo", action: #selector(performRedo), keyEquivalent: "Z")
+        redoItem.target = self
+        editMenu.addItem(redoItem)
         editMenu.addItem(NSMenuItem.separator())
         editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
         editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
@@ -104,6 +110,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
+
+        // Format menu. These have to be menu key equivalents: the note's text
+        // view is first responder while typing and swallows plain key events,
+        // so a keyDown handler on the window never sees Cmd+B.
+        let formatMenuItem = NSMenuItem()
+        let formatMenu = NSMenu(title: "Format")
+        for (title, selector, key, mask) in [
+            ("Bold", #selector(formatBold), "b", NSEvent.ModifierFlags.command),
+            ("Italic", #selector(formatItalic), "i", .command),
+            ("Underline", #selector(formatUnderline), "u", .command),
+            ("Strikethrough", #selector(formatStrikethrough), "x", [.command, .shift])
+        ] {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
+            item.keyEquivalentModifierMask = mask
+            item.target = self
+            formatMenu.addItem(item)
+        }
+        formatMenuItem.submenu = formatMenu
+        mainMenu.addItem(formatMenuItem)
 
         // View menu
         let viewMenuItem = NSMenuItem()
@@ -469,6 +494,57 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         notesVisible = true
     }
 
+    // MARK: - Text Formatting & Undo
+
+    /// Window the note commands act on. keyWindow is nil whenever the app is
+    /// not active - including the instant the menu bar validates its items -
+    /// so mainWindow stands in and the commands stay enabled.
+    private var activeNoteWindow: NSWindow? {
+        return NSApp.keyWindow ?? NSApp.mainWindow
+    }
+
+    /// Editor of the note that currently has focus, in either presentation.
+    private var activeNoteEditor: NoteEditorViewController? {
+        if let controller = activeNoteWindow?.windowController as? NoteWindowController {
+            return controller.editor
+        }
+        if let controller = activeNoteWindow?.windowController as? TabWindowController {
+            return controller.activeEditor
+        }
+        return nil
+    }
+
+    @objc func formatBold() { activeNoteEditor?.toggleBold(nil) }
+    @objc func formatItalic() { activeNoteEditor?.toggleItalic(nil) }
+    @objc func formatUnderline() { activeNoteEditor?.toggleUnderline(nil) }
+    @objc func formatStrikethrough() { activeNoteEditor?.toggleStrikethrough(nil) }
+
+    /// Undo stack Cmd+Z acts on. The focused text view owns one - that covers
+    /// both the note body and the title field's editor. When focus sits
+    /// elsewhere (a toolbar button, or nowhere after a click on the note
+    /// background) Cmd+Z still means "undo my last edit in this note", so the
+    /// note's own stack is used rather than the window's empty one.
+    private var activeUndoManager: UndoManager? {
+        if let textView = activeNoteWindow?.firstResponder as? NSTextView,
+           let manager = textView.undoManager {
+            return manager
+        }
+        if let editor = activeNoteEditor {
+            return editor.contentUndoManager
+        }
+        return activeNoteWindow?.undoManager
+    }
+
+    @objc func performUndo() {
+        guard let manager = activeUndoManager, manager.canUndo else { return }
+        manager.undo()
+    }
+
+    @objc func performRedo() {
+        guard let manager = activeUndoManager, manager.canRedo else { return }
+        manager.redo()
+    }
+
     // MARK: - Screens & Layout
 
     /// Menu of connected displays; rebuilt on open via NSMenuDelegate so a
@@ -735,11 +811,21 @@ extension AppDelegate: NSMenuDelegate {
 // MARK: - NSMenuItemValidation
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(organizeNotes) {
+        switch menuItem.action {
+        case #selector(organizeNotes):
             // Tab mode stacks the notes in one window - nothing to lay out.
             return viewMode == .windows && !noteWindows.isEmpty
+        case #selector(formatBold), #selector(formatItalic),
+             #selector(formatUnderline), #selector(formatStrikethrough):
+            // Formatting needs selected text in a focused note body.
+            return activeNoteEditor?.canFormatSelection ?? false
+        case #selector(performUndo):
+            return activeUndoManager?.canUndo ?? false
+        case #selector(performRedo):
+            return activeUndoManager?.canRedo ?? false
+        default:
+            return true
         }
-        return true
     }
 }
 

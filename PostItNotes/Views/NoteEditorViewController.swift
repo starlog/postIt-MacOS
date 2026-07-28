@@ -39,6 +39,19 @@ class NoteEditorViewController: NSViewController {
     private var resizeStartSize: NSSize = .zero
     private var resizeImageCharIndex: Int?
 
+    /// Every note keeps its own undo stack. In tab mode a single window-level
+    /// manager would let Cmd+Z on one note undo an edit made in another.
+    private let noteUndoManager: UndoManager = {
+        let manager = UndoManager()
+        manager.levelsOfUndo = 100
+        return manager
+    }()
+
+    /// Whether the previous edit added or removed text - see the delegate's
+    /// shouldChangeTextIn, which uses it to close the typing undo group.
+    private enum TypingEdit { case insertion, deletion }
+    private var lastTypingEdit: TypingEdit?
+
     private let colorOptions: [(name: String, hex: String)] = [
         ("Yellow", "#FFFF88"),
         ("Green", "#88FF88"),
@@ -76,6 +89,19 @@ class NoteEditorViewController: NSViewController {
         self.note = note
         self.noteService = noteService
         super.init(nibName: nil, bundle: nil)
+
+        // Undoing an attribute-only change (bold and friends) does not post
+        // textDidChange, so without this the formatting would come back the
+        // next time the note is loaded.
+        for name in [NSNotification.Name.NSUndoManagerDidUndoChange,
+                     NSNotification.Name.NSUndoManagerDidRedoChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(undoRedoDidChange),
+                                                   name: name, object: noteUndoManager)
+        }
+    }
+
+    @objc private func undoRedoDidChange() {
+        saveContent()
     }
 
     required init?(coder: NSCoder) {
@@ -279,6 +305,7 @@ class NoteEditorViewController: NSViewController {
 
         contentTextView = NSTextView()
         contentTextView.isRichText = true
+        contentTextView.allowsUndo = true
         contentTextView.usesFontPanel = false
         contentTextView.usesRuler = false
         contentTextView.font = NSFont.systemFont(ofSize: 13)
@@ -483,10 +510,26 @@ class NoteEditorViewController: NSViewController {
         }
     }
 
+    /// Selection the formatting commands act on, or nil when there is nothing
+    /// to format. Focus is required so a stale body selection is not restyled
+    /// while the title field or the markdown preview has the keyboard.
+    private var formattableSelection: NSRange? {
+        guard contentTextView.window?.firstResponder === contentTextView else { return nil }
+        let range = contentTextView.selectedRange()
+        return range.length > 0 ? range : nil
+    }
+
+    /// True when a formatting command would currently do something - drives
+    /// whether the Format menu items are enabled.
+    var canFormatSelection: Bool { return formattableSelection != nil }
+
+    /// This note's undo stack, so Cmd+Z reaches it even when the body is not
+    /// the first responder.
+    var contentUndoManager: UndoManager { return noteUndoManager }
+
     @objc func toggleBold(_ sender: Any?) {
-        guard let textStorage = contentTextView.textStorage else { return }
-        let selectedRange = contentTextView.selectedRange()
-        guard selectedRange.length > 0 else { return }
+        guard let textStorage = contentTextView.textStorage,
+              let selectedRange = formattableSelection else { return }
 
         var isBold = false
         textStorage.enumerateAttribute(.font, in: selectedRange) { value, _, _ in
@@ -495,6 +538,9 @@ class NoteEditorViewController: NSViewController {
             }
         }
 
+        // Route the attribute change through the text view so it lands on
+        // the undo stack and is saved the same way typing is.
+        guard contentTextView.shouldChangeText(in: selectedRange, replacementString: nil) else { return }
         textStorage.beginEditing()
         textStorage.enumerateAttribute(.font, in: selectedRange) { value, range, _ in
             if let font = value as? NSFont {
@@ -508,13 +554,12 @@ class NoteEditorViewController: NSViewController {
             }
         }
         textStorage.endEditing()
-        saveContent()
+        contentTextView.didChangeText()
     }
 
     @objc func toggleItalic(_ sender: Any?) {
-        guard let textStorage = contentTextView.textStorage else { return }
-        let selectedRange = contentTextView.selectedRange()
-        guard selectedRange.length > 0 else { return }
+        guard let textStorage = contentTextView.textStorage,
+              let selectedRange = formattableSelection else { return }
 
         var isItalic = false
         textStorage.enumerateAttribute(.font, in: selectedRange) { value, _, _ in
@@ -523,6 +568,9 @@ class NoteEditorViewController: NSViewController {
             }
         }
 
+        // Route the attribute change through the text view so it lands on
+        // the undo stack and is saved the same way typing is.
+        guard contentTextView.shouldChangeText(in: selectedRange, replacementString: nil) else { return }
         textStorage.beginEditing()
         textStorage.enumerateAttribute(.font, in: selectedRange) { value, range, _ in
             if let font = value as? NSFont {
@@ -536,13 +584,12 @@ class NoteEditorViewController: NSViewController {
             }
         }
         textStorage.endEditing()
-        saveContent()
+        contentTextView.didChangeText()
     }
 
     @objc func toggleUnderline(_ sender: Any?) {
-        guard let textStorage = contentTextView.textStorage else { return }
-        let selectedRange = contentTextView.selectedRange()
-        guard selectedRange.length > 0 else { return }
+        guard let textStorage = contentTextView.textStorage,
+              let selectedRange = formattableSelection else { return }
 
         var hasUnderline = false
         textStorage.enumerateAttribute(.underlineStyle, in: selectedRange) { value, _, _ in
@@ -551,6 +598,9 @@ class NoteEditorViewController: NSViewController {
             }
         }
 
+        // Route the attribute change through the text view so it lands on
+        // the undo stack and is saved the same way typing is.
+        guard contentTextView.shouldChangeText(in: selectedRange, replacementString: nil) else { return }
         textStorage.beginEditing()
         if hasUnderline {
             textStorage.removeAttribute(.underlineStyle, range: selectedRange)
@@ -558,7 +608,31 @@ class NoteEditorViewController: NSViewController {
             textStorage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: selectedRange)
         }
         textStorage.endEditing()
-        saveContent()
+        contentTextView.didChangeText()
+    }
+
+    @objc func toggleStrikethrough(_ sender: Any?) {
+        guard let textStorage = contentTextView.textStorage,
+              let selectedRange = formattableSelection else { return }
+
+        var hasStrikethrough = false
+        textStorage.enumerateAttribute(.strikethroughStyle, in: selectedRange) { value, _, _ in
+            if let style = value as? Int, style != 0 {
+                hasStrikethrough = true
+            }
+        }
+
+        // Route the attribute change through the text view so it lands on
+        // the undo stack and is saved the same way typing is.
+        guard contentTextView.shouldChangeText(in: selectedRange, replacementString: nil) else { return }
+        textStorage.beginEditing()
+        if hasStrikethrough {
+            textStorage.removeAttribute(.strikethroughStyle, range: selectedRange)
+        } else {
+            textStorage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: selectedRange)
+        }
+        textStorage.endEditing()
+        contentTextView.didChangeText()
     }
 
     // MARK: - Font
@@ -579,6 +653,7 @@ class NoteEditorViewController: NSViewController {
             guard let textStorage = contentTextView.textStorage else { return }
             let range = NSRange(location: 0, length: textStorage.length)
             guard range.length > 0 else { return }
+            guard contentTextView.shouldChangeText(in: range, replacementString: nil) else { return }
             textStorage.beginEditing()
             textStorage.enumerateAttribute(.font, in: range) { value, attrRange, _ in
                 if let font = value as? NSFont {
@@ -588,7 +663,7 @@ class NoteEditorViewController: NSViewController {
                 }
             }
             textStorage.endEditing()
-            saveContent()
+            contentTextView.didChangeText()
         }
     }
 
@@ -622,6 +697,7 @@ class NoteEditorViewController: NSViewController {
             guard let textStorage = contentTextView.textStorage else { return }
             let range = NSRange(location: 0, length: textStorage.length)
             guard range.length > 0 else { return }
+            guard contentTextView.shouldChangeText(in: range, replacementString: nil) else { return }
             textStorage.beginEditing()
             textStorage.enumerateAttribute(.font, in: range) { value, attrRange, _ in
                 let currentFont = (value as? NSFont) ?? NSFont.systemFont(ofSize: 13)
@@ -635,7 +711,7 @@ class NoteEditorViewController: NSViewController {
                 textStorage.addAttribute(.font, value: newFont, range: attrRange)
             }
             textStorage.endEditing()
-            saveContent()
+            contentTextView.didChangeText()
         }
     }
 
@@ -767,6 +843,8 @@ class NoteEditorViewController: NSViewController {
             md = md.replace(/\\*\\*\\*([^*]+)\\*\\*\\*/g, '<strong><em>$1</em></strong>');
             md = md.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
             md = md.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+            // Strikethrough
+            md = md.replace(/~~([^~]+)~~/g, '<del>$1</del>');
             // Inline code
             md = md.replace(/`([^`]+)`/g, '<code>$1</code>');
             // Images - convert absolute paths to file:// URLs, wrap with delete button
@@ -1230,6 +1308,7 @@ class NoteEditorViewController: NSViewController {
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
         markdownWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "deleteImage")
     }
 }
@@ -1247,6 +1326,33 @@ extension NoteEditorViewController: NSTextFieldDelegate {
 extension NoteEditorViewController: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         saveContent()
+    }
+
+    func undoManager(for view: NSTextView) -> UndoManager? {
+        return noteUndoManager
+    }
+
+    /// AppKit coalesces a burst of typing into one undo group, and deleting
+    /// straight after typing keeps extending that same group - so Cmd+Z threw
+    /// the typing away instead of bringing the deleted text back. Closing the
+    /// group whenever the edit flips between adding and removing text makes
+    /// "type, delete, Cmd+Z" restore what was deleted.
+    func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange,
+                  replacementString: String?) -> Bool {
+        // nil means only attributes change (bold and friends). That also has to
+        // close the group, otherwise Cmd+Z after Cmd+B takes the text with it.
+        guard let replacement = replacementString else {
+            textView.breakUndoCoalescing()
+            lastTypingEdit = nil
+            return true
+        }
+
+        let kind: TypingEdit = (replacement.isEmpty && affectedCharRange.length > 0) ? .deletion : .insertion
+        if let previous = lastTypingEdit, previous != kind {
+            textView.breakUndoCoalescing()
+        }
+        lastTypingEdit = kind
+        return true
     }
 }
 

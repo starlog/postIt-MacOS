@@ -57,6 +57,7 @@ class TabWindowController: NSWindowController {
         window.backgroundColor = .clear
 
         super.init(window: window)
+        window.delegate = self
 
         setupUI()
         reloadTabs()
@@ -510,6 +511,15 @@ class TabWindowController: NSWindowController {
 }
 
 // MARK: - NSGestureRecognizerDelegate
+extension TabWindowController: NSWindowDelegate {
+    /// The window is shared by every tab, so the undo stack follows whichever
+    /// note is currently selected.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        return activeEditor?.contentUndoManager
+    }
+}
+
+// MARK: - NSGestureRecognizerDelegate
 extension TabWindowController: NSGestureRecognizerDelegate {
     /// The window-drag pan sits on an ancestor of the tab scroll view, so without
     /// this it would recognize mid-drag and steal tracking from the scrollbar -
@@ -619,16 +629,5 @@ class TabHostWindow: NSWindow {
         return super.performKeyEquivalent(with: event)
     }
 
-    override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if flags.contains(.command), let controller = windowController as? TabWindowController {
-            switch event.charactersIgnoringModifiers {
-            case "b": controller.activeEditor?.toggleBold(nil); return
-            case "i": controller.activeEditor?.toggleItalic(nil); return
-            case "u": controller.activeEditor?.toggleUnderline(nil); return
-            default: break
-            }
-        }
-        super.keyDown(with: event)
-    }
+    // Text formatting is handled by the Format menu - see NoteWindow.
 }
