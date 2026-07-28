@@ -119,6 +119,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         viewMenu.addItem(NSMenuItem.separator())
 
+        let organizeItem = NSMenuItem(title: "Organize Notes", action: #selector(organizeNotes), keyEquivalent: "o")
+        organizeItem.keyEquivalentModifierMask = [.command, .shift]
+        organizeItem.target = self
+        viewMenu.addItem(organizeItem)
+
+        let screenItem = NSMenuItem(title: "Move to Screen", action: nil, keyEquivalent: "")
+        screenItem.submenu = makeScreenMenu()
+        viewMenu.addItem(screenItem)
+
+        viewMenu.addItem(NSMenuItem.separator())
+
         let tabModeItem = NSMenuItem(title: "Tab Mode", action: #selector(toggleTabMode), keyEquivalent: "t")
         tabModeItem.keyEquivalentModifierMask = [.command, .shift]
         tabModeItem.target = self
@@ -240,6 +251,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let organizeItem = NSMenuItem(title: "Organize Notes", action: #selector(organizeNotes), keyEquivalent: "")
+        organizeItem.target = self
+        menu.addItem(organizeItem)
+
+        let screenItem = NSMenuItem(title: "Move to Screen", action: nil, keyEquivalent: "")
+        screenItem.submenu = makeScreenMenu()
+        menu.addItem(screenItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let tabModeItem = NSMenuItem(title: "Tab Mode", action: #selector(toggleTabMode), keyEquivalent: "")
         tabModeItem.target = self
         tabModeItem.state = viewMode == .tabs ? .on : .off
@@ -316,16 +337,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openNoteWindow(_ note: PostItNote) {
-        // Ensure note is within visible screen area
+        // Recentre only notes that landed on no connected display - checking
+        // every screen keeps notes parked on a second monitor where they are.
         var fixedNote = note
-        if let screen = NSScreen.main ?? NSScreen.screens.first {
+        let noteRect = NSRect(x: fixedNote.x, y: fixedNote.y, width: fixedNote.width, height: fixedNote.height)
+        if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(noteRect) }),
+           let screen = NSScreen.main ?? NSScreen.screens.first {
             let visibleFrame = screen.visibleFrame
-            let noteRect = NSRect(x: fixedNote.x, y: fixedNote.y, width: fixedNote.width, height: fixedNote.height)
-            if !visibleFrame.intersects(noteRect) {
-                fixedNote.x = Double(visibleFrame.midX) - fixedNote.width / 2
-                fixedNote.y = Double(visibleFrame.midY) - fixedNote.height / 2
-                noteService.updateNote(fixedNote)
-            }
+            fixedNote.x = Double(visibleFrame.midX) - fixedNote.width / 2
+            fixedNote.y = Double(visibleFrame.midY) - fixedNote.height / 2
+            noteService.updateNote(fixedNote)
         }
 
         let controller = NoteWindowController(note: fixedNote, noteService: noteService)
@@ -446,6 +467,116 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             openNoteWindow(note)
         }
         notesVisible = true
+    }
+
+    // MARK: - Screens & Layout
+
+    /// Menu of connected displays; rebuilt on open via NSMenuDelegate so a
+    /// monitor plugged in while the app runs shows up without a restart.
+    private func makeScreenMenu() -> NSMenu {
+        let menu = NSMenu(title: "Move to Screen")
+        menu.delegate = self
+        return menu
+    }
+
+    private func rebuildScreenMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let current = notesScreen()?.displayID
+
+        for (index, screen) in NSScreen.screens.enumerated() {
+            let item = NSMenuItem(title: "\(index + 1). \(screen.menuDescription)",
+                                  action: #selector(moveNotesToScreen(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            if let id = screen.displayID {
+                item.representedObject = NSNumber(value: id)
+                item.state = id == current ? .on : .off
+            }
+            menu.addItem(item)
+        }
+    }
+
+    @objc private func moveNotesToScreen(_ sender: NSMenuItem) {
+        // The display list may have changed since the menu was built, so resolve
+        // by display id and only fall back to the position it was listed at.
+        var target: NSScreen?
+        if let id = (sender.representedObject as? NSNumber)?.uint32Value {
+            target = NSScreen.screen(withDisplayID: id)
+        }
+        if target == nil, sender.tag >= 0, sender.tag < NSScreen.screens.count {
+            target = NSScreen.screens[sender.tag]
+        }
+        guard let screen = target else {
+            NSLog("[PostItNotes] Selected screen is no longer connected")
+            return
+        }
+
+        if !notesVisible { showAllNotes() }
+        if viewMode == .tabs {
+            moveTabWindow(to: screen)
+        } else {
+            arrangeNotes(on: screen)
+        }
+    }
+
+    /// Tidies the notes up on the screen they are already on.
+    @objc func organizeNotes() {
+        guard viewMode == .windows else { return }
+        guard let screen = notesScreen() else { return }
+        if !notesVisible { showAllNotes() }
+        arrangeNotes(on: screen)
+    }
+
+    /// The screen the notes currently live on - the one holding the most of them.
+    private func notesScreen() -> NSScreen? {
+        if viewMode == .tabs {
+            return tabWindowController?.window?.screen ?? NSScreen.main ?? NSScreen.screens.first
+        }
+
+        var counts: [CGDirectDisplayID: Int] = [:]
+        for controller in noteWindows.values {
+            if let id = controller.window?.screen?.displayID {
+                counts[id, default: 0] += 1
+            }
+        }
+        // Ties break on display id so the checkmark does not jump around.
+        let ranked = counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+        if let id = ranked.first?.key, let screen = NSScreen.screen(withDisplayID: id) {
+            return screen
+        }
+        return NSScreen.main ?? NSScreen.screens.first
+    }
+
+    /// Lays every open note out on `screen` and stores the new positions.
+    private func arrangeNotes(on screen: NSScreen) {
+        let notes = noteService.getOpenNotes().filter { noteWindows[$0.id] != nil }
+        guard !notes.isEmpty else { return }
+
+        let frames = NoteArranger.arrange(notes, in: screen.visibleFrame)
+        var geometries: [UUID: CGRect] = [:]
+        for note in notes {
+            guard let frame = frames[note.id], let controller = noteWindows[note.id] else { continue }
+            controller.applyFrame(frame)
+            controller.window?.orderFront(nil)
+            geometries[note.id] = frame
+        }
+        noteService.updateGeometries(geometries)
+        NSLog("[PostItNotes] Arranged %d notes on %@", geometries.count, screen.menuDescription)
+    }
+
+    /// Tab mode has a single window - centre it on the target screen instead.
+    private func moveTabWindow(to screen: NSScreen) {
+        guard let window = tabWindowController?.window else { return }
+        let visible = screen.visibleFrame
+        let size = NSSize(width: min(window.frame.width, visible.width),
+                          height: min(window.frame.height, visible.height))
+        window.setFrame(NSRect(x: visible.midX - size.width / 2,
+                               y: visible.midY - size.height / 2,
+                               width: size.width,
+                               height: size.height),
+                        display: true)
+        NSLog("[PostItNotes] Moved tab window to %@", screen.menuDescription)
     }
 
     /// Switches between one-window-per-note and the single tabbed window.
@@ -590,12 +721,25 @@ extension AppDelegate: NSMenuDelegate {
         switch menu.title {
         case "Closed Notes":
             rebuildClosedNotesMenu(menu)
+        case "Move to Screen":
+            rebuildScreenMenu(menu)
         case "View":
             showHideMenuItem?.title = notesVisible ? "Hide Notes" : "Show Notes"
             tabModeMenuItem?.state = viewMode == .tabs ? .on : .off
         default:
             break
         }
+    }
+}
+
+// MARK: - NSMenuItemValidation
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(organizeNotes) {
+            // Tab mode stacks the notes in one window - nothing to lay out.
+            return viewMode == .windows && !noteWindows.isEmpty
+        }
+        return true
     }
 }
 

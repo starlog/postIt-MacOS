@@ -75,8 +75,21 @@ class NoteWindowController: NSWindowController {
         editor.toggleUnderline(sender)
     }
 
+    /// Repositions the window during a layout pass. The move/resize
+    /// notifications are ignored while it runs so the rearrangement is written
+    /// to notes.json once by the caller rather than twice per window here.
+    func applyFrame(_ frame: NSRect) {
+        guard let window = self.window else { return }
+        isApplyingLayout = true
+        window.setFrame(frame, display: true)
+        isApplyingLayout = false
+        editor.setGeometry(x: Double(frame.origin.x), y: Double(frame.origin.y),
+                           width: Double(frame.size.width), height: Double(frame.size.height))
+    }
+
     // MARK: - Window dragging
 
+    private var isApplyingLayout = false
     private var initialMouseLocation: NSPoint = .zero
     private var initialWindowOrigin: NSPoint = .zero
 
@@ -95,13 +108,13 @@ class NoteWindowController: NSWindowController {
     }
 
     @objc private func windowDidMove(_ notification: Notification) {
-        guard let frame = window?.frame else { return }
+        guard !isApplyingLayout, let frame = window?.frame else { return }
         editor.updateGeometry(x: Double(frame.origin.x), y: Double(frame.origin.y),
                               width: Double(frame.size.width), height: Double(frame.size.height))
     }
 
     @objc private func windowDidResize(_ notification: Notification) {
-        guard let frame = window?.frame else { return }
+        guard !isApplyingLayout, let frame = window?.frame else { return }
         editor.updateGeometry(x: Double(frame.origin.x), y: Double(frame.origin.y),
                               width: Double(frame.size.width), height: Double(frame.size.height))
     }

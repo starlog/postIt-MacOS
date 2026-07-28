@@ -19,6 +19,7 @@
 		A10010 /* FontSettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012; };
 		A10011 /* NoteEditorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10013; };
 		A10012 /* TabWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014; };
+		A10013 /* NoteArranger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		B10012 /* FontSettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FontSettingsWindowController.swift; sourceTree = "<group>"; };
 		B10013 /* NoteEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorViewController.swift; sourceTree = "<group>"; };
 		B10014 /* TabWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabWindowController.swift; sourceTree = "<group>"; };
+		B10015 /* NoteArranger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteArranger.swift; sourceTree = "<group>"; };
 		B10020 /* PostItNotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PostItNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -87,6 +89,7 @@
 				B10004 /* ConfigService.swift */,
 				B10005 /* HotkeyService.swift */,
 				B10011 /* ClaudeAPIService.swift */,
+				B10015 /* NoteArranger.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -191,6 +194,7 @@
 				A10010 /* FontSettingsWindowController.swift in Sources */,
 				A10011 /* NoteEditorViewController.swift in Sources */,
 				A10012 /* TabWindowController.swift in Sources */,
+				A10013 /* NoteArranger.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

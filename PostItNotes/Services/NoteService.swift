@@ -52,6 +52,22 @@ class NoteService {
         }
     }
 
+    /// Writes many geometry changes at once - used when notes are rearranged,
+    /// so a layout pass costs a single save instead of one per note.
+    func updateGeometries(_ geometries: [UUID: CGRect]) {
+        var changed = false
+        for (id, rect) in geometries {
+            guard let index = notes.firstIndex(where: { $0.id == id }) else { continue }
+            notes[index].x = Double(rect.origin.x)
+            notes[index].y = Double(rect.origin.y)
+            notes[index].width = Double(rect.size.width)
+            notes[index].height = Double(rect.size.height)
+            notes[index].modifiedAt = Date()
+            changed = true
+        }
+        if changed { save() }
+    }
+
     func deleteNote(id: UUID) {
         notes.removeAll { $0.id == id }
         save()

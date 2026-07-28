@@ -360,11 +360,17 @@ class NoteEditorViewController: NSViewController {
     /// Called by the host window once the note geometry changed on screen.
     /// Routed through the editor so the note struct never forks into two copies.
     func updateGeometry(x: Double, y: Double, width: Double, height: Double) {
+        setGeometry(x: x, y: y, width: width, height: height)
+        noteService.updateNote(note)
+    }
+
+    /// Same, but without touching storage - for repositioning done in bulk,
+    /// where the caller saves every note in one go.
+    func setGeometry(x: Double, y: Double, width: Double, height: Double) {
         note.x = x
         note.y = y
         note.width = width
         note.height = height
-        noteService.updateNote(note)
     }
 
     func focusContent() {

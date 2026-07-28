@@ -18,6 +18,18 @@ macOS 네이티브 포스트잇 메모 애플리케이션
 - JSON 기반 자동 저장
 - 데이터 폴더 변경 가능
 
+### 화면 정리 및 멀티 모니터
+- **Organize Notes** (Cmd+Shift+O): 열려 있는 메모를 겹침이 최소가 되도록 자동 배치
+  - 큰 메모부터 왼쪽 위에서 오른쪽 아래로 줄 단위 배치, 각 줄은 가운데 정렬
+  - 메모 크기는 사용자가 지정한 그대로 유지 (화면보다 큰 메모만 화면 크기로 축소)
+  - 한 화면에 다 들어가지 않으면 줄 간격을 비례 축소해 겹침을 모든 줄에 고르게 분산
+- **Move to Screen**: 연결된 모니터 목록에서 선택한 화면으로 모든 메모를 이동 후 자동 정리
+  - 모니터 이름과 해상도를 표시하고, 현재 메모가 있는 화면에 체크 표시
+  - 실행 중 모니터를 연결/해제해도 메뉴를 열 때마다 목록이 갱신됨
+  - 탭 모드에서는 탭 창을 선택한 화면 중앙으로 이동
+- View 메뉴와 메뉴바 아이콘 양쪽에서 접근 가능
+- 두 번째 모니터에 둔 메모는 재실행 후에도 그 화면 위치 그대로 복원
+
 ### 탭 모드 (Tab Mode)
 - 모든 메모를 하나의 창에 탭으로 모아서 보는 모드
 - 탭 라벨은 메모 제목 사용 (제목이 없으면 본문 첫 줄에서 자동 생성)
@@ -76,9 +88,9 @@ macOS 네이티브 포스트잇 메모 애플리케이션
 
 ### 메뉴
 - **상단 메뉴바**: PostItNotes, Edit, View, Settings
-- **View 메뉴**: Tab Mode (Cmd+Shift+T)
+- **View 메뉴**: Hide/Show Notes (Cmd+Shift+H), Organize Notes (Cmd+Shift+O), Move to Screen, Tab Mode (Cmd+Shift+T), Closed Notes
 - **Settings 메뉴**: Set Hotkey, Set Default Font, Data Folder
-- **상태바 메뉴**: New Note, Tab Mode, Show/Hide Notes, Data Folder, Hotkey Settings, Quit
+- **상태바 메뉴**: New Note, Organize Notes, Move to Screen, Tab Mode, Closed Notes, Show/Hide Notes, Data Folder, Hotkey Settings, Quit
 
 ## 빌드
 
