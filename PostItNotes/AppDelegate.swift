@@ -31,6 +31,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let dataDir = configService.getDataDirectory()
         NSLog("[PostItNotes] Data directory: %@", dataDir)
         noteService = NoteService(dataDirectory: dataDir)
+        guard resolveNoteStore(atLaunch: true) else {
+            NSApp.terminate(nil)
+            return
+        }
         hotkeyService = HotkeyService()
         viewMode = configService.getViewMode()
         NSLog("[PostItNotes] View mode: %@", viewMode.rawValue)
@@ -63,7 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        hotkeyService.unregister()
+        hotkeyService?.unregister()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -713,14 +717,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func changeDataFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Select"
-        panel.message = "Choose data storage folder"
-
-        if panel.runModal() == .OK, let url = panel.url {
+        if let path = chooseDataFolderPath() {
             // Tear down whatever is on screen (windows or the tab window)
             for (_, controller) in noteWindows {
                 controller.window?.close()
@@ -730,8 +727,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             tabWindowController = nil
 
             // Update config and reload
-            configService.setDataDirectory(url.path)
-            noteService.changeDataDirectory(url.path)
+            configService.setDataDirectory(path)
+            noteService.changeDataDirectory(path)
+            guard resolveNoteStore(atLaunch: false) else {
+                NSApp.terminate(nil)
+                return
+            }
 
             // Load notes from new location
             if viewMode == .tabs {
@@ -743,6 +744,111 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    private func chooseDataFolderPath() -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Select"
+        panel.message = "Choose data storage folder"
+        return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+
+    // MARK: - Note Store Recovery
+
+    private enum StoreAction {
+        case retry, restoreBackup, chooseFolder, startEmpty, quit
+
+        var title: String {
+            switch self {
+            case .retry: return "Try Again"
+            case .restoreBackup: return "Restore Backup"
+            case .chooseFolder: return "Choose Folder…"
+            case .startEmpty: return "Start Empty"
+            case .quit: return "Quit"
+            }
+        }
+    }
+
+    /// Makes sure the notes on disk were really read before anything can be
+    /// saved over them. A missing or unreadable store is never treated as a
+    /// fresh install without asking - after a reboot a cloud-synced folder may
+    /// not be there yet, and the folder may have been moved. Returns false when
+    /// the user chose to quit.
+    private func resolveNoteStore(atLaunch: Bool) -> Bool {
+        while true {
+            let directory = noteService.getDataDirectory()
+            let backupCount = noteService.backupNotes()?.count ?? 0
+            let backupLine = backupCount > 0
+                ? "\n\nA local backup holds \(backupCount) note(s) from the last save."
+                : ""
+            let restore: [StoreAction] = backupCount > 0 ? [.restoreBackup] : []
+
+            let action: StoreAction
+            switch noteService.status {
+            case .ok:
+                return true
+
+            case .fileMissing:
+                // An empty folder is normal on first launch or for a newly chosen
+                // folder; only worth asking when there are notes to lose.
+                guard atLaunch, backupCount > 0 else {
+                    noteService.startEmpty()
+                    return true
+                }
+                action = askStoreAction(
+                    title: "Notes file not found",
+                    message: "There is no notes.json in:\n\(directory)\(backupLine)",
+                    actions: [.retry] + restore + [.chooseFolder, .startEmpty, .quit])
+
+            case .directoryMissing:
+                guard atLaunch else {
+                    noteService.startEmpty()
+                    return true
+                }
+                action = askStoreAction(
+                    title: "Notes folder not found",
+                    message: "The data folder does not exist:\n\(directory)\n\nIt may have been moved or renamed, or a cloud drive such as Dropbox may not be ready yet. Nothing has been changed.\(backupLine)",
+                    actions: [.retry] + restore + [.chooseFolder, .startEmpty, .quit])
+
+            case .unreadable(let reason):
+                action = askStoreAction(
+                    title: "Notes file could not be read",
+                    message: "\(directory)/notes.json\n\n\(reason)\n\nStarting empty keeps the file, renamed to notes.unreadable-<date>.json.\(backupLine)",
+                    actions: [.retry] + restore + [.chooseFolder, .startEmpty, .quit])
+            }
+
+            switch action {
+            case .retry:
+                noteService.reload()
+            case .restoreBackup:
+                noteService.restoreFromBackup()
+            case .chooseFolder:
+                if let path = chooseDataFolderPath() {
+                    configService.setDataDirectory(path)
+                    noteService.changeDataDirectory(path)
+                }
+            case .startEmpty:
+                noteService.startEmpty()
+            case .quit:
+                return false
+            }
+        }
+    }
+
+    private func askStoreAction(title: String, message: String, actions: [StoreAction]) -> StoreAction {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        for action in actions {
+            alert.addButton(withTitle: action.title)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        return actions.indices.contains(index) ? actions[index] : .quit
     }
 
     @objc func openHotkeySettings() {
@@ -846,7 +952,7 @@ extension AppDelegate: HotkeySettingsDelegate {
         let config = HotkeyConfig(modifiers: modifiers, keyCode: keyCode, enabled: enabled)
         configService.setHotkeyConfig(config)
 
-        hotkeyService.unregister()
+        hotkeyService?.unregister()
         if enabled {
             hotkeyService.hotkeyPressed = { [weak self] in
                 self?.toggleNotesVisibility()

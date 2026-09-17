@@ -1,8 +1,22 @@
 import Foundation
 
 class NoteService {
+    /// What the last load found. Anything but .ok means the notes on disk were
+    /// not read, so saving stays off until the app decides what to do -
+    /// otherwise the first save would overwrite the user's real notes.
+    enum StoreStatus: Equatable {
+        case ok
+        /// The data folder is gone: moved, renamed, or a cloud drive not ready yet.
+        case directoryMissing
+        /// The folder exists but holds no notes.json.
+        case fileMissing
+        /// notes.json exists but could not be read or decoded.
+        case unreadable(String)
+    }
+
     private var notes: [PostItNote] = []
     private var dataDirectory: String
+    private(set) var status: StoreStatus = .ok
 
     init(dataDirectory: String) {
         self.dataDirectory = dataDirectory
@@ -82,24 +96,74 @@ class NoteService {
         load()
     }
 
+    func reload() {
+        load()
+    }
+
+    /// Starts this folder with no notes, creating it if needed. An unreadable
+    /// notes.json is moved aside first rather than overwritten.
+    func startEmpty() {
+        if case .unreadable = status {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            let name = "notes.unreadable-\(formatter.string(from: Date())).json"
+            let aside = (dataDirectory as NSString).appendingPathComponent(name)
+            try? FileManager.default.moveItem(atPath: filePath, toPath: aside)
+        }
+        notes = []
+        status = .ok
+    }
+
+    /// Local copy of the last good save. It lives outside the data folder so it
+    /// survives that folder being moved, renamed or emptied by a sync client.
+    static var backupFilePath: String {
+        return (ConfigService.defaultDataDirectory as NSString).appendingPathComponent("backup/notes.json")
+    }
+
+    func backupNotes() -> [PostItNote]? {
+        return try? NoteService.decodeNotes(atPath: NoteService.backupFilePath)
+    }
+
+    func restoreFromBackup() {
+        guard let backup = backupNotes() else { return }
+        startEmpty()
+        notes = backup
+        save()
+    }
+
     private func load() {
-        let path = filePath
-        guard FileManager.default.fileExists(atPath: path) else {
-            notes = []
+        notes = []
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dataDirectory, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            status = .directoryMissing
+            return
+        }
+        guard FileManager.default.fileExists(atPath: filePath) else {
+            status = .fileMissing
             return
         }
         do {
-            let data = try Data(contentsOf: URL(fileURLWithPath: path))
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            notes = try decoder.decode([PostItNote].self, from: data)
+            notes = try NoteService.decodeNotes(atPath: filePath)
+            status = .ok
         } catch {
-            print("Failed to load notes: \(error)")
-            notes = []
+            NSLog("[PostItNotes] Failed to load notes: %@", "\(error)")
+            status = .unreadable(error.localizedDescription)
         }
     }
 
+    private static func decodeNotes(atPath path: String) throws -> [PostItNote] {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([PostItNote].self, from: data)
+    }
+
     private func save() {
+        guard status == .ok else {
+            NSLog("[PostItNotes] Not saving: notes on disk were not loaded")
+            return
+        }
         let dir = dataDirectory
         if !FileManager.default.fileExists(atPath: dir) {
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -109,7 +173,13 @@ class NoteService {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(notes)
-            try data.write(to: URL(fileURLWithPath: filePath))
+            try data.write(to: URL(fileURLWithPath: filePath), options: .atomic)
+
+            let backupPath = NoteService.backupFilePath
+            try? FileManager.default.createDirectory(
+                atPath: (backupPath as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true)
+            try? data.write(to: URL(fileURLWithPath: backupPath), options: .atomic)
         } catch {
             print("Failed to save notes: \(error)")
         }
